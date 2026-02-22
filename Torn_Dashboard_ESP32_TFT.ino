@@ -146,17 +146,20 @@ void updateCooldown(Cooldown &cd, bool hideWhenZero = false) {
     }
 }
 
-void updateCooldownFromAPI(Cooldown &cd, int newAPIValue, long serverTime = 0, bool isAbsoluteTimestamp = false) {
-  if (isAbsoluteTimestamp) {
-      // Calculate countdown from absolute timestamp
-      long remaining = max(0L, newAPIValue - serverTime);
-      cd.ticktime = remaining;
-  } else {
-      // Normal countdown
-      cd.apiValue = newAPIValue;
-      if (cd.ticktime < cd.apiValue) cd.ticktime = cd.apiValue;
-  }
+void updateCooldownFromAPI(Cooldown &cd, int newValue, long serverTime = 0, bool isAbsolute = false) {
+
+    if (isAbsolute) {
+        // Absolute timestamp (Hospital/Jail)
+        long remaining = max(0L, newValue - serverTime);
+        cd.ticktime = remaining;
+    } else {
+        // Normal countdown (Booster/Drug/Medical/Travel)
+        cd.ticktime = max(0, newValue);
+    }
+
+    cd.apiValue = newValue;
 }
+
 // ------------------- WiFi -------------------
 void connectWiFi() {
   tft.fillScreen(TFT_BLACK);
@@ -300,11 +303,11 @@ void loop() {
       drawBar(10, startY + 105, barWidth, barHeight, (float)lifeCurrent/lifeMax, TFT_BLUE, TFT_DARKGREY, lifeCurrent, lifeMax, "Life");
 
       // -------- Update cooldowns from API --------
-      updateCooldownFromAPI(boosterCD, boosterCooldown, serverTime, true);  // absolute timestamp
-      updateCooldownFromAPI(drugCD, drugCooldown, serverTime, true);  // absolute timestamp
-      updateCooldownFromAPI(medicalCD, medicalCooldown, serverTime, true);  // absolute timestamp
+      updateCooldownFromAPI(boosterCD, boosterCooldown);
+      updateCooldownFromAPI(drugCD, drugCooldown);
+      updateCooldownFromAPI(medicalCD, medicalCooldown);
 
-      updateCooldownFromAPI(travelCD, travelTime, serverTime, true); // absolute timestamp
+      updateCooldownFromAPI(travelCD, travelTime);
       updateCooldownFromAPI(hospitalCD, hospitalTs, serverTime, true); // absolute timestamp
       updateCooldownFromAPI(jailCD, jailTs, serverTime, true);         // absolute timestamp
 
