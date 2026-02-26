@@ -5,6 +5,8 @@
 #include <WiFiClientSecure.h>
 #include "secrets.h"
 
+const int wifiCount = sizeof(wifiList) / sizeof(wifiList[0]);
+
 // ------------------- TFT Setup -------------------
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite sprite = TFT_eSprite(&tft);
@@ -268,6 +270,31 @@ void setup() {
   connectWiFi();
 }
 
+// ------------------- Show Error -------------------
+void showError(String msg) {
+    sprite.fillScreen(TFT_BLACK);
+
+    // --- Header Message ---
+    String errorHeader = "API ERROR";
+    sprite.setTextSize(2); 
+    int textHeaderWidth = sprite.textWidth(errorHeader);
+    sprite.setTextColor(TFT_RED);
+    sprite.setCursor((screenWidth - textHeaderWidth) / 2, 50);
+    sprite.println(errorHeader);
+
+    // --- Error Message ---
+    sprite.setTextSize(1);
+    int textWidth = sprite.textWidth(msg);
+    sprite.setTextColor(TFT_RED);
+    sprite.setCursor((screenWidth - textWidth) / 2, 80);
+    sprite.println(msg);
+
+    sprite.pushSprite(0, 0);
+
+    delay(APIRefreshSecond * 1000);
+}
+
+    
 // ------------------- Main Loop -------------------
 void loop() {
   // Touch screen toggle
@@ -294,50 +321,53 @@ void loop() {
         int httpCode = http.GET();
 
         if (httpCode > 0) {
-        String payload = http.getString();
-        DynamicJsonDocument doc(4096);
-        if (deserializeJson(doc, payload)) { http.end(); return; }
-        if (!doc.containsKey("error")) {
-            name = doc["name"] | "Unknown";
-            playerId = doc["player_id"] | 0;
-            level = doc["level"] | 0;
-            statusDesc = doc["status"]["description"] | "Idle";
-            statusCol = doc["status"]["color"] | "white";
+            String payload = http.getString();
+            DynamicJsonDocument doc(4096);
+            if (deserializeJson(doc, payload)) { http.end(); return; }
+            if (!doc.containsKey("error")) {
+                name = doc["name"] | "Unknown";
+                playerId = doc["player_id"] | 0;
+                level = doc["level"] | 0;
+                statusDesc = doc["status"]["description"] | "Idle";
+                statusCol = doc["status"]["color"] | "white";
 
-            energyCurrent = doc["energy"]["current"] | 0;
-            energyMax     = doc["energy"]["maximum"] | 1;
-            nerveCurrent  = doc["nerve"]["current"] | 0;
-            nerveMax      = doc["nerve"]["maximum"] | 1;
-            happyCurrent  = doc["happy"]["current"] | 0;
-            happyMax      = doc["happy"]["maximum"] | 1;
-            lifeCurrent   = doc["life"]["current"] | 0;
-            lifeMax       = doc["life"]["maximum"] | 1;
+                energyCurrent = doc["energy"]["current"] | 0;
+                energyMax     = doc["energy"]["maximum"] | 1;
+                nerveCurrent  = doc["nerve"]["current"] | 0;
+                nerveMax      = doc["nerve"]["maximum"] | 1;
+                happyCurrent  = doc["happy"]["current"] | 0;
+                happyMax      = doc["happy"]["maximum"] | 1;
+                lifeCurrent   = doc["life"]["current"] | 0;
+                lifeMax       = doc["life"]["maximum"] | 1;
 
-            boosterCooldown = doc["cooldowns"]["booster"] | 0;
-            drugCooldown    = doc["cooldowns"]["drug"] | 0;
-            medicalCooldown = doc["cooldowns"]["medical"] | 0;
+                boosterCooldown = doc["cooldowns"]["booster"] | 0;
+                drugCooldown    = doc["cooldowns"]["drug"] | 0;
+                medicalCooldown = doc["cooldowns"]["medical"] | 0;
 
-            travelTime = doc["travel"]["time_left"] | 0;
+                travelTime = doc["travel"]["time_left"] | 0;
 
-            serverTime = doc["server_time"] | 0;
-            hospitalTs = doc["states"]["hospital_timestamp"] | 0;
-            jailTs     = doc["states"]["jail_timestamp"] | 0;
+                serverTime = doc["server_time"] | 0;
+                hospitalTs = doc["states"]["hospital_timestamp"] | 0;
+                jailTs     = doc["states"]["jail_timestamp"] | 0;
 
-            if (doc.containsKey("money_onhand")) {
-            moneyOnHand = doc["money_onhand"] | 0;
+                if (doc.containsKey("money_onhand")) {
+                moneyOnHand = doc["money_onhand"] | 0;
+                }
+
+                // -------- Notifications --------
+                if (doc.containsKey("notifications")) {
+                JsonObject notif = doc["notifications"].as<JsonObject>();
+                notificationsCount += notif["messages"] | 0;
+                notificationsCount += notif["events"] | 0;
+                notificationsCount += notif["awards"] | 0;
+                notificationsCount += notif["competition"] | 0;
+                }
+
+                lastApiUpdateMillis = millis();     // ESP millis when we got the server time
             }
-
-            // -------- Notifications --------
-            if (doc.containsKey("notifications")) {
-            JsonObject notif = doc["notifications"].as<JsonObject>();
-            notificationsCount += notif["messages"] | 0;
-            notificationsCount += notif["events"] | 0;
-            notificationsCount += notif["awards"] | 0;
-            notificationsCount += notif["competition"] | 0;
+            else{
+                showError(doc["error"]["error"]);
             }
-
-            lastApiUpdateMillis = millis();     // ESP millis when we got the server time
-        }
         }
         http.end();
 
