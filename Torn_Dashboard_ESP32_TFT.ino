@@ -26,7 +26,7 @@ struct Cooldown {
 // ------------------- Cooldowns -------------------
 int cooldownY = 270;
 int leftX   = 20;
-int centerX = screenWidth / 2 - 17;
+int centerX = screenWidth / 2 - 21;
 int rightX  = screenWidth - 60;
 
 Cooldown boosterCD = {0, 0, "Booster", leftX, cooldownY, 0};
@@ -44,6 +44,10 @@ int chainMax = 0;
 int chainTimeout = 0;
 int chainTimeoutTick = 0;
 unsigned long lastChainUpdate = 0;
+
+int chainCooldown = 0;          // cooldown from API
+int chainCooldownTick = 0;      // local ticking value
+unsigned long lastChainCooldownUpdate = 0;
 
 // ------------------- Organized Crime -------------------
 long ocReadyAt = 0;
@@ -363,7 +367,18 @@ void loop() {
                     chainMax     = doc["chain"]["max"] | 0;
                     chainTimeout = doc["chain"]["timeout"] | 0;
 
+                    chainCooldown = doc["chain"]["cooldown"] | 0;
+
+                    // Convert absolute timestamp to remaining seconds
+                    if (chainCooldown > 0 && serverTime > 0) {
+                        chainCooldownTick = max(0L, chainCooldown - serverTime);
+                    } else {
+                        chainCooldownTick = 0;
+                    }
+                    lastChainCooldownUpdate = millis();
+
                     chainTimeoutTick = chainTimeout;
+                    lastChainUpdate = millis();
                 }
             }
         }
@@ -478,46 +493,78 @@ void loop() {
         sprite.print("$" + formatMoney(moneyOnHand));
 
         // Status
-        drawStatus(statusDesc, 93, statusColor(statusCol), 2, 15);
+        drawStatus(statusDesc, 91, statusColor(statusCol), 2, 15);
 
         // Bars
         int barWidth = screenWidth - 20;
         int barHeight = 10;
         int spacing = 25;
+
         drawBar(10, barStartY, barWidth, barHeight, (float)energyCurrent/energyMax, TFT_GREEN, TFT_DARKGREY, energyCurrent, energyMax, "Energy");
         drawBar(10, barStartY + spacing, barWidth, barHeight, (float)nerveCurrent/nerveMax, TFT_RED, TFT_DARKGREY, nerveCurrent, nerveMax, "Nerve");
         drawBar(10, barStartY + spacing*2, barWidth, barHeight, (float)happyCurrent/happyMax, TFT_YELLOW, TFT_DARKGREY, happyCurrent, happyMax, "Happy");
         drawBar(10, barStartY + spacing*3, barWidth, barHeight, (float)lifeCurrent/lifeMax, TFT_BLUE, TFT_DARKGREY, lifeCurrent, lifeMax, "Life");
-        drawBar(10, barStartY + spacing*4, barWidth, barHeight, 0, TFT_LIGHTGREY, TFT_DARKGREY, chainCurrent, chainMax, "Chain");
+        drawBar(10, barStartY + spacing*4, barWidth, barHeight, (float)chainCurrent/chainMax, TFT_LIGHTGREY, TFT_DARKGREY, chainCurrent, chainMax, "Chain");
     }
 
-  // Update cooldowns every second
-  updateCooldown(boosterCD);
-  updateCooldown(drugCD);
-  updateCooldown(medicalCD);
-  updateCooldown(travelCD);
-  updateCooldown(hospitalCD);
-  updateCooldown(jailCD);
+    // Update cooldowns every second
+    updateCooldown(boosterCD);
+    updateCooldown(drugCD);
+    updateCooldown(medicalCD);
+    updateCooldown(travelCD);
+    updateCooldown(hospitalCD);
+    updateCooldown(jailCD);
 
-    // -------- Update chain countdown --------
-    if (chainTimeoutTick > 0 && millis() - lastChainUpdate >= 1000) {
-        chainTimeoutTick--;
+    // -------- Smart Chain Countdown --------
+    // -------- Update chain countdown every second --------
+    if (millis() - lastChainUpdate >= 1000) {
         lastChainUpdate = millis();
 
-        int startY = barStartY + spacing*4 - 12;
-        int textY = startY + (10 - 8)/2;
-        int timerX = 10 + (screenWidth - 20)/2 - 18;
+        // Tick down cooldown first
+        if (chainCooldownTick > 0) {
+            chainCooldownTick--;
+        } 
+        // Then tick timeout if cooldown finished
+        else if (chainTimeoutTick > 0) {
+            chainTimeoutTick--;
+        }
 
-        int minutes = chainTimeoutTick / 60;
-        int seconds = chainTimeoutTick % 60;
-        char timerBuf[8];
-        sprintf(timerBuf, "%02d:%02d", minutes, seconds);
+        int activeTimer = (chainCooldownTick > 0) ? chainCooldownTick : chainTimeoutTick;
 
-        sprite.fillRect(timerX, textY, 36, 8, TFT_BLACK);
-        sprite.setTextSize(1);
-        sprite.setTextColor(TFT_WHITE);
-        sprite.setCursor(timerX, textY);
-        sprite.print(timerBuf);
+        // Clear timer area
+        int startY = 155;
+        int spacing = 25;
+        int barHeight = 10;
+        int chainBarY = startY + spacing*4 - 12;
+        int textY = chainBarY + (barHeight - 8)/2;
+        int labelX = 10;
+        int valueX = screenWidth - 10 - (String(0) + "/" + String(10)).length()*6;
+        int timerX = labelX + (valueX - labelX)/2;
+
+        sprite.fillRect(timerX, textY, 60, 10, TFT_BLACK);
+
+        if (activeTimer > 0) {
+            char timerBuf[12];
+
+            if (chainCooldownTick > 0) {
+                // Format HH:MM:SS for cooldown
+                int hours   = activeTimer / 3600;
+                int minutes = (activeTimer % 3600) / 60;
+                int seconds = activeTimer % 60;
+                sprite.setTextColor(TFT_CYAN);
+                sprintf(timerBuf, "%02d:%02d:%02d", hours, minutes, seconds);
+            } else {
+                // Format MM:SS for timeout
+                int minutes = activeTimer / 60;
+                int seconds = activeTimer % 60;
+                sprite.setTextColor(TFT_WHITE);
+                sprintf(timerBuf, "%02d:%02d", minutes, seconds);
+            }
+
+            sprite.setTextSize(1);
+            sprite.setCursor(timerX, textY);
+            sprite.print(timerBuf);
+        }
     }
 
     // -------- Update Organized Crime countdown every second --------
@@ -592,7 +639,7 @@ void loop() {
 
         sprite.fillRect(timerX, 30, timerWidth, 10, TFT_BLACK);
         sprite.setTextSize(1);
-        sprite.setTextColor(TFT_LIGHTGREY);
+        sprite.setTextColor(TFT_WHITE);
         sprite.setCursor(timerX, 30);
         sprite.print(timeBuffer);
     }
@@ -605,7 +652,7 @@ void loop() {
 
     sprite.fillRect(screenWidth - sprite.textWidth(buf) - 10, 45, sprite.textWidth(buf), 12, TFT_BLACK);
     sprite.setTextSize(1);
-    sprite.setTextColor(TFT_LIGHTGREY);
+    sprite.setTextColor(TFT_WHITE);
     sprite.setCursor(screenWidth - sprite.textWidth(buf) - 10, 45);
     sprite.print(buf);
 
