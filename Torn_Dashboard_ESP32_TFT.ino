@@ -38,8 +38,8 @@ struct Cooldown {
 // ------------------- Cooldowns -------------------
 int cooldownY = 270;
 int leftX   = 20;
-int centerX = screenWidth / 2 - 30;
-int rightX  = screenWidth - 70;
+int centerX = screenWidth / 2 - 17;
+int rightX  = screenWidth - 60;
 
 Cooldown boosterCD = {0, 0, "Booster", leftX, cooldownY, 0};
 Cooldown drugCD    = {0, 0, "Drug", centerX, cooldownY, 0};
@@ -291,7 +291,7 @@ void loop() {
   static unsigned long lastApiUpdate = 0;
   unsigned long now = millis();
 
-    // -------- API fetch every 60s --------
+    // -------- API fetch --------
     if (now - lastApiUpdate >= (APIRefreshSecond * 1000) || lastApiUpdate == 0) {
         lastApiUpdate = now;
 
