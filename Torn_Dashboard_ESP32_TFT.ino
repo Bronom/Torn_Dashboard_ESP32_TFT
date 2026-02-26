@@ -2,6 +2,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <TFT_eSPI.h>
+#include <WiFiClientSecure.h>
 
 //  -- Wifi ---
 struct WifiCred {
@@ -16,7 +17,11 @@ WifiCred wifiList[] = {
 const char* apiKey = "YOUR_TORN_API_KEY";
 
 const int wifiCount = sizeof(wifiList) / sizeof(wifiList[0]);
+
+int APIRefreshSecond = 60;
+
 TFT_eSPI tft = TFT_eSPI(); // TFT instance
+TFT_eSprite sprite = TFT_eSprite(&tft); // create sprite linked to tft
 
 bool screenOn = true;
 unsigned long lastTouchTime = 0;
@@ -35,7 +40,7 @@ struct Cooldown {
 
 // ------------------- Setup cooldown X/Y -------------------
 int cooldownY = 270;
-int leftX   = 10;
+int leftX   = 20;
 int centerX = screenWidth / 2 - 30;
 int rightX  = screenWidth - 70;
 
@@ -45,7 +50,7 @@ Cooldown medicalCD = {0, 0, "Medical", rightX, cooldownY, 0};
 
 // Extra timers: Travel, Hospital, Jail
 int extraY = cooldownY + 25;
-int extraLeftX   = 10;
+int extraLeftX   = 20;
 int extraCenterX = screenWidth / 2 - 30;
 int extraRightX  = screenWidth - 70;
 
@@ -53,15 +58,38 @@ Cooldown travelCD   = {0, 0, "Travel", extraLeftX, extraY, 0};
 Cooldown hospitalCD = {0, 0, "Hospital", extraCenterX, extraY, 0};
 Cooldown jailCD     = {0, 0, "Jail", extraRightX, extraY, 0};
 
+long travelServerBaseTime = 0;
+unsigned long travelMillisBase = 0;
+unsigned long lastTravelDraw = 0;
+
 // ------------------- Chain timer -------------------
 int chainTimeoutTick = 0;
 unsigned long lastChainUpdate = 0;
+unsigned long chainServerBaseTime = 0;
+unsigned long chainMillisBase = 0;
+
+int chainCurrent = 0;
+int chainMax = 0;
+int chainTimeout = 0;
 
 // ------------------- Organized Crime timer -------------------
-long ocReadyAt = 0;                 // ready_at timestamp
-long ocServerBaseTime = 0;          // Torn server_time at fetch
-unsigned long ocMillisBase = 0;     // millis() at fetch
+long ocReadyAt = 0;
+long ocServerBaseTime = 0;
+unsigned long ocMillisBase = 0;
 unsigned long lastOCDraw = 0;       // for 1 sec refresh
+
+// ------------------- Next Ranked War -------------------
+long rwStartAt = 0;
+long rwEndAt = 0;
+String opponentName = "";
+String rwResult = "";
+long rwServerBaseTime = 0;
+unsigned long rwMillisBase = 0;
+unsigned long lastRWDraw = 0;
+
+// ------------------- Torn clock -------------------
+unsigned long lastClockDraw = 0;
+long serverTime = 0;
 
 // ------------------- Functions -------------------
 uint16_t statusColor(String color) {
@@ -75,58 +103,59 @@ uint16_t statusColor(String color) {
   return TFT_WHITE;
 }
 
+// ------------------- Draw Status -------------------
 void drawStatus(String text, int y, uint16_t textColor, int textSize = 2, int padding = 5) {
-  tft.setTextSize(textSize);
-  tft.setTextColor(textColor, TFT_BLACK);
-  int maxWidth = screenWidth - 2 * padding;
-  int cursorX = padding;
-  int cursorY = y;
-  int spaceWidth = tft.textWidth(" ");
+    sprite.setTextSize(textSize);
+    sprite.setTextColor(textColor, TFT_BLACK);
+    int maxWidth = screenWidth - 2 * padding;
+    int cursorX = padding;
+    int cursorY = y;
+    int spaceWidth = sprite.textWidth(" ");
 
-  int start = 0;
-  while (start < text.length()) {
-    int end = text.indexOf(' ', start);
-    if (end == -1) end = text.length();
-    String word = text.substring(start, end);
+    int start = 0;
+    while (start < text.length()) {
+        int end = text.indexOf(' ', start);
+        if (end == -1) end = text.length();
+        String word = text.substring(start, end);
 
-    int wordWidth = tft.textWidth(word);
+        int wordWidth = sprite.textWidth(word);
 
-    if (cursorX + wordWidth > padding + maxWidth) {
-      cursorX = padding;
-      cursorY += 8 * textSize + 2;
+        if (cursorX + wordWidth > padding + maxWidth) {
+            cursorX = padding;
+            cursorY += 8 * textSize + 2;
+        }
+
+        sprite.setCursor(cursorX, cursorY);
+        sprite.print(word);
+        cursorX += wordWidth + spaceWidth;
+        start = end + 1;
     }
-
-    tft.setCursor(cursorX, cursorY);
-    tft.print(word);
-    cursorX += wordWidth + spaceWidth;
-    start = end + 1;
-  }
 }
 
 // Draw bar (Energy, Nerve, Happy, Life, Chain)
 void drawBar(int x, int y, int width, int height, float percent, uint16_t fillColor, uint16_t bgColor, int currentValue, int maxValue, const char* label) {
-  int spacing = 12;
-  tft.fillRect(x, y, width, height, bgColor);
-  if (percent > 1) percent = 1;
-  int fillWidth = (int)(width * percent);
-  tft.fillRect(x, y, fillWidth, height, fillColor);
-  tft.drawRect(x, y, width, height, TFT_WHITE);
+    int spacing = 12;
+    sprite.fillRect(x, y, width, height, bgColor);
+    if (percent > 1) percent = 1;
+    int fillWidth = (int)(width * percent);
+    sprite.fillRect(x, y, fillWidth, height, fillColor);
+    sprite.drawRect(x, y, width, height, TFT_WHITE);
 
-  tft.setTextSize(1);
-  tft.setTextColor(TFT_WHITE);
+    sprite.setTextSize(1);
+    sprite.setTextColor(TFT_WHITE);
 
-  char buf[16];
-  sprintf(buf, "%d/%d", currentValue, maxValue);
+    char buf[16];
+    sprintf(buf, "%d/%d", currentValue, maxValue);
 
-  int textWidth = strlen(buf) * 6;
-  int textHeight = 8;
-  int textY = y + (height - textHeight)/2;
+    int textWidth = strlen(buf) * 6;
+    int textHeight = 8;
+    int textY = y + (height - textHeight)/2;
 
-  tft.setCursor(10, textY - spacing);
-  tft.print(label);
+    sprite.setCursor(10, textY - spacing);
+    sprite.print(label);
 
-  tft.setCursor((screenWidth - textWidth) - 10, textY - spacing);
-  tft.print(buf);
+    sprite.setCursor((screenWidth - textWidth) - 10, textY - spacing);
+    sprite.print(buf);
 }
 
 // ------------------- Cooldown Functions -------------------
@@ -136,8 +165,8 @@ void updateCooldown(Cooldown &cd, bool hideWhenZero = false) {
         if (cd.ticktime > 0) cd.ticktime--;
         cd.lastUpdate = now;
 
-        // Clear area under label (20px high row)
-        tft.fillRect(cd.x, cd.y, 80, 20, TFT_BLACK); 
+        // Clear the previous timer in the sprite
+        sprite.fillRect(cd.x, cd.y, 80, 20, TFT_BLACK); 
 
         if (cd.ticktime > 0 || !hideWhenZero) {
             int hours = cd.ticktime / 3600;
@@ -148,16 +177,16 @@ void updateCooldown(Cooldown &cd, bool hideWhenZero = false) {
             if (cd.ticktime == 0 && !hideWhenZero) strcpy(buf, "READY");
             else sprintf(buf, "%02d:%02d:%02d", hours, minutes, seconds);
 
-            tft.setTextSize(1);
-            tft.setTextColor((cd.ticktime == 0 && !hideWhenZero) ? TFT_GREEN : TFT_WHITE);
+            sprite.setTextSize(1);
+            sprite.setTextColor((cd.ticktime == 0 && !hideWhenZero) ? TFT_GREEN : TFT_WHITE);
 
             // Draw label
-            tft.setCursor(cd.x, cd.y);
-            tft.print(cd.label);
+            sprite.setCursor(cd.x, cd.y);
+            sprite.print(cd.label);
 
             // Draw timer under label
-            tft.setCursor(cd.x, cd.y + 10); // 10px below label
-            tft.print(buf);
+            sprite.setCursor(cd.x, cd.y + 10); // 10px below label
+            sprite.print(buf);
         }
     }
 }
@@ -239,40 +268,38 @@ void setup() {
   tft.setRotation(0);
   pinMode(TFT_BL, OUTPUT);
   digitalWrite(TFT_BL, HIGH);
-  tft.fillScreen(TFT_BLACK);
+
+  sprite.setColorDepth(8);
+  sprite.createSprite(screenWidth, screenHeight); // full-screen buffer
+  sprite.fillScreen(TFT_BLACK); // clear buffer
+
   connectWiFi();
 }
-
 // ------------------- Loop -------------------
 void loop() {
-  uint16_t touchX, touchY;
-  if (tft.getTouch(&touchX, &touchY)) {
-    if (millis() - lastTouchTime > 300) {
-      screenOn = !screenOn;
-      lastTouchTime = millis();
-      digitalWrite(TFT_BL, screenOn ? HIGH : LOW);
+    uint16_t touchX, touchY;
+    if (tft.getTouch(&touchX, &touchY)) {
+        if (millis() - lastTouchTime > 300) {
+            screenOn = !screenOn;
+            lastTouchTime = millis();
+            digitalWrite(TFT_BL, screenOn ? HIGH : LOW);
+        }
     }
-  }
 
-  if (WiFi.status() != WL_CONNECTED) {
-    WiFi.reconnect();
-    delay(1000);
-    return;
-  }
+    if (WiFi.status() != WL_CONNECTED) {
+        WiFi.reconnect();
+        delay(1000);
+        return;
+    }
+    
+    // ---------------- Global layout variables ----------------
+    int startY = 155;   // starting Y position for bars
+    int spacing = 25;   // vertical spacing between bars
+    int barHeight = 10; // height of bars
 
-  static unsigned long lastApiUpdate = 0;
-  unsigned long now = millis();
-  static unsigned long lastApiUpdateMillis = 0; // ESP millis at last API fetch
-  static long lastServerTime = 0;               // Torn server time at last API fetch
-
-  if (now - lastApiUpdate >= 60000 || lastApiUpdate == 0) {
-    lastApiUpdate = now;
-
-    // -------- Player API --------
-    HTTPClient http;
-    String url = "https://api.torn.com/user/?selections=basic,bars,travel,cooldowns,notifications,money,profile&key=" + String(apiKey);
-    http.begin(url);
-    int httpCode = http.GET();
+    unsigned long now = millis();
+    static unsigned long lastApiUpdate = 0;
+    static unsigned long lastApiUpdateMillis = 0;
 
     int energyCurrent = 0, energyMax = 1;
     int nerveCurrent = 0, nerveMax = 1;
@@ -280,315 +307,469 @@ void loop() {
     int lifeCurrent = 0, lifeMax = 1;
     int boosterCooldown = 0, drugCooldown = 0, medicalCooldown = 0;
     int travelTime = 0;
-    long serverTime = 0, hospitalTs = 0, jailTs = 0;
+    long hospitalTs = 0, jailTs = 0;
     String name = "Unknown";
     int playerId = 0, level = 0;
     String statusDesc = "Idle", statusCol = "white";
     int notificationsCount = 0;
     long moneyOnHand = 0;
-    long organizedCrimeReadyAt = 0;
 
-    if (httpCode > 0) {
-      String payload = http.getString();
-      DynamicJsonDocument doc(4096);
-      if (deserializeJson(doc, payload)) { http.end(); return; }
-      if (!doc.containsKey("error")) {
-        name = doc["name"] | "Unknown";
-        playerId = doc["player_id"] | 0;
-        level = doc["level"] | 0;
-        statusDesc = doc["status"]["description"] | "Idle";
-        statusCol = doc["status"]["color"] | "white";
 
-        energyCurrent = doc["energy"]["current"] | 0;
-        energyMax     = doc["energy"]["maximum"] | 1;
-        nerveCurrent  = doc["nerve"]["current"] | 0;
-        nerveMax      = doc["nerve"]["maximum"] | 1;
-        happyCurrent  = doc["happy"]["current"] | 0;
-        happyMax      = doc["happy"]["maximum"] | 1;
-        lifeCurrent   = doc["life"]["current"] | 0;
-        lifeMax       = doc["life"]["maximum"] | 1;
+    // -------- API fetch every 60s --------
+    if (now - lastApiUpdate >= (APIRefreshSecond * 1000) || lastApiUpdate == 0) {
+        lastApiUpdate = now;
 
-        boosterCooldown = doc["cooldowns"]["booster"] | 0;
-        drugCooldown    = doc["cooldowns"]["drug"] | 0;
-        medicalCooldown = doc["cooldowns"]["medical"] | 0;
+        WiFiClientSecure client;
+        client.setInsecure();  // skip cert validation
 
-        travelTime = doc["travel"]["time_left"] | 0;
+        // --- Get server time ---
+        HTTPClient httpTime;
+        httpTime.begin(client, "https://api.torn.com/v2/user/timestamp");
+        httpTime.addHeader("Authorization", "ApiKey " + String(apiKey));
+        httpTime.addHeader("accept", "application/json");
 
-        serverTime = doc["server_time"] | 0;
-        hospitalTs = doc["states"]["hospital_timestamp"] | 0;
-        jailTs     = doc["states"]["jail_timestamp"] | 0;
+        int code = httpTime.GET();
 
-        if (doc.containsKey("money_onhand")) {
-          moneyOnHand = doc["money_onhand"] | 0;
+        if (code > 0) {
+            String payload = httpTime.getString();
+            DynamicJsonDocument doc(1024);
+            if (!deserializeJson(doc, payload)) {
+                serverTime = doc["timestamp"] | 0;
+
+                lastApiUpdateMillis = millis();
+            }
         }
+        httpTime.end();
 
-        // -------- Notifications --------
-        if (doc.containsKey("notifications")) {
-          JsonObject notif = doc["notifications"].as<JsonObject>();
-          notificationsCount += notif["messages"] | 0;
-          notificationsCount += notif["events"] | 0;
-          notificationsCount += notif["awards"] | 0;
-          notificationsCount += notif["competition"] | 0;
-        }
+        // ------------------- PLAYER BASIC -------------------
+        HTTPClient httpPlayer;
+        httpPlayer.begin(client, "https://api.torn.com/v2/user/basic");
+        httpPlayer.addHeader("Authorization", "ApiKey " + String(apiKey));
+        httpPlayer.addHeader("accept", "application/json");
 
-        lastServerTime = serverTime;        // seconds from Torn API
-        lastApiUpdateMillis = millis();     // ESP millis when we got the server time
-      }
-    }
-    http.end();
+        code = httpPlayer.GET();
+        if (code > 0) {
+            String payload = httpPlayer.getString();
+            //Serial.println(payload); // debug
 
-    // -------- Chain API --------
-    int chainCurrent = 0, chainMax = 1, chainTimeout = 0;
-    HTTPClient chainHttp;
-    String chainUrl = "https://api.torn.com/faction/8606?selections=chain&key=" + String(apiKey);
-    chainHttp.begin(chainUrl);
-    int chainCode = chainHttp.GET();
-    if (chainCode > 0) {
-      String chainPayload = chainHttp.getString();
-      DynamicJsonDocument chainDoc(1024);
-      if (!deserializeJson(chainDoc, chainPayload)) {
-        if (chainDoc.containsKey("chain")) {
-          chainCurrent = chainDoc["chain"]["current"] | 0;
-          chainMax     = chainDoc["chain"]["max"] | 10;
-          chainTimeout = chainDoc["chain"]["timeout"] | 0;
-        }
-      }
-    }
-    chainHttp.end();
+            DynamicJsonDocument doc(40960);
+            DeserializationError err = deserializeJson(doc, payload);
+            if (!err && doc.containsKey("profile")) {
+                JsonObject profile = doc["profile"];
 
-    // -------- V2 Organized Crime API --------
-    HTTPClient ocHttp;
-    String ocUrl = "https://api.torn.com/v2/user/organizedcrime";
-    ocHttp.begin(ocUrl);
-    ocHttp.addHeader("accept", "application/json");
-    ocHttp.addHeader("Authorization", "ApiKey " + String(apiKey));
+                name = profile["name"] | "Unknown";
+                playerId = profile["id"] | 0;
+                level = profile["level"] | 0;
 
-    int ocCode = ocHttp.GET();
-    if (ocCode > 0) {
-        String ocPayload = ocHttp.getString();
-        DynamicJsonDocument ocDoc(2048);
-
-        if (!deserializeJson(ocDoc, ocPayload)) {
-
-            // Adjust path if API structure differs
-            if (ocDoc.containsKey("organizedCrime")) {
-                JsonObject ocObj = ocDoc["organizedCrime"];
-
-                if (ocObj.containsKey("ready_at")) {
-                    ocReadyAt = ocObj["ready_at"] | 0;
-
-                    // Sync with Torn server time
-                    ocServerBaseTime = serverTime;
-                    ocMillisBase = millis();
+                if (profile.containsKey("status")) {
+                    JsonObject status = profile["status"];
+                    statusDesc = status["description"] | "Idle";
+                    statusCol  = status["color"] | "white";
                 }
             }
         }
+        httpPlayer.end();
+
+
+        // ------------------- BARS -------------------
+        HTTPClient httpBars;
+        httpBars.begin(client, "https://api.torn.com/v2/user/bars");
+        httpBars.addHeader("Authorization", "ApiKey " + String(apiKey));
+        httpBars.addHeader("accept", "application/json");
+
+        code = httpBars.GET();
+        if (code > 0) {
+            String payload = httpBars.getString();
+            DynamicJsonDocument doc(8192);
+            if (!deserializeJson(doc, payload)) {
+                JsonObject bars = doc["bars"];
+                energyCurrent = bars["energy"]["current"] | 0;
+                energyMax     = bars["energy"]["maximum"] | 1;
+
+                nerveCurrent = bars["nerve"]["current"] | 0;
+                nerveMax     = bars["nerve"]["maximum"] | 1;
+
+                happyCurrent = bars["happy"]["current"] | 0;
+                happyMax     = bars["happy"]["maximum"] | 1;
+
+                lifeCurrent = bars["life"]["current"] | 0;
+                lifeMax     = bars["life"]["maximum"] | 1;
+            }
+        }
+        httpBars.end();
+
+
+        // ------------------- MONEY -------------------
+        HTTPClient httpMoney;
+        httpMoney.begin(client, "https://api.torn.com/v2/user/money");
+        httpMoney.addHeader("Authorization", "ApiKey " + String(apiKey));
+        httpMoney.addHeader("accept", "application/json");
+
+        code = httpMoney.GET();
+        if (code > 0) {
+            String payload = httpMoney.getString();
+            DynamicJsonDocument doc(2048);
+            if (!deserializeJson(doc, payload)) {
+                moneyOnHand = doc["money"]["wallet"] | 0;
+            }
+        }
+        httpMoney.end();
+
+
+        // ------------------- NOTIFICATIONS -------------------
+        HTTPClient httpNotif;
+        httpNotif.begin(client, "https://api.torn.com/v2/user/notifications");
+        httpNotif.addHeader("Authorization", "ApiKey " + String(apiKey));
+        httpNotif.addHeader("accept", "application/json");
+
+        code = httpNotif.GET();
+        if (code > 0) {
+            String payload = httpNotif.getString();
+            DynamicJsonDocument doc(4096);
+            if (!deserializeJson(doc, payload)) {
+                notificationsCount = doc["notifications"]["count"] | 0;
+            }
+        }
+        httpNotif.end();
+
+
+        // ------------------- COOLDOWNS -------------------
+        HTTPClient httpCD;
+        httpCD.begin(client, "https://api.torn.com/v2/user/cooldowns");
+        httpCD.addHeader("Authorization", "ApiKey " + String(apiKey));
+        httpCD.addHeader("accept", "application/json");
+
+        int codeCD = httpCD.GET();
+        if (codeCD > 0) {
+            String payloadCD = httpCD.getString();
+            DynamicJsonDocument cdDoc(8192);
+            if (!deserializeJson(cdDoc, payloadCD)) {
+                JsonObject cd = cdDoc["cooldowns"];
+
+                boosterCooldown = cd["booster"] | 0;
+                drugCooldown    = cd["drug"] | 0;
+                medicalCooldown = cd["medical"] | 0;
+            }
+        }
+        httpCD.end();
+
+
+        // ------------------- TRAVEL -------------------
+        HTTPClient travelHttp;
+        travelHttp.begin(client, "https://api.torn.com/v2/user/travel");
+        travelHttp.addHeader("Authorization", "ApiKey " + String(apiKey));
+        travelHttp.addHeader("accept", "application/json");
+
+        int travelCode = travelHttp.GET();
+        if (travelCode > 0) {
+            String travelPayload = travelHttp.getString();
+            DynamicJsonDocument travelDoc(4096);
+
+            if (!deserializeJson(travelDoc, travelPayload)) {
+                JsonObject travel = travelDoc["travel"];
+
+                travelTime = travel["time_left"] | 0;
+            }
+        }
+        travelHttp.end();
+
+        // ------------------- Profile / Status ----------------------
+        HTTPClient statusHttp;
+        statusHttp.begin(client, "https://api.torn.com/v2/user/profile");
+        statusHttp.addHeader("Authorization", "ApiKey " + String(apiKey));
+        statusHttp.addHeader("accept", "application/json");
+
+        int statusCode = statusHttp.GET();
+        if (statusCode > 0) {
+            String payload = statusHttp.getString();
+
+            DynamicJsonDocument doc(16384);
+            DeserializationError err = deserializeJson(doc, payload);
+            if (!err) {
+                JsonObject profile = doc["profile"];
+                JsonObject status  = profile["status"];
+
+                String state       = status["state"] | "";
+                long untilTs       = status["until"] | 0;
+
+                // Update your cooldowns
+                if (state == "Hospital") hospitalTs = untilTs;
+                else if (state == "Jail") jailTs = untilTs;
+            }
+        }
+        statusHttp.end();
+
+        // ------------------- CHAIN -------------------
+        HTTPClient httpChain;
+        String url = "https://api.torn.com/v2/faction/chain";
+        httpChain.begin(client, url);
+        httpChain.addHeader("Authorization", "ApiKey " + String(apiKey));
+        httpChain.addHeader("accept", "application/json");
+
+        code = httpChain.GET();
+        chainCurrent = 0;
+        chainMax = 0;
+        chainTimeout = 0;
+
+        if (code > 0) {
+            String payload = httpChain.getString();
+            //Serial.println(payload); // debug
+            DynamicJsonDocument doc(2048);
+            if (!deserializeJson(doc, payload)) {
+                if (doc.containsKey("chain")) {
+                    chainCurrent = doc["chain"]["current"] | 0;
+                    chainMax     = doc["chain"]["max"] | 0;
+                    chainTimeout = doc["chain"]["timeout"] | 0;
+
+                    chainTimeoutTick = chainTimeout;
+                }
+            }
+        }
+        httpChain.end();
+
+        // ------------------- ORGANIZED CRIME -------------------
+        HTTPClient httpOC;
+        httpOC.begin(client, "https://api.torn.com/v2/user/organizedcrime");
+        httpOC.addHeader("Authorization", "ApiKey " + String(apiKey));
+        httpOC.addHeader("accept", "application/json");
+
+        int ocCode = httpOC.GET();
+        if (ocCode > 0) {
+            String payload = httpOC.getString();
+            DynamicJsonDocument doc(2048);
+
+            if (!deserializeJson(doc, payload)) {
+                ocReadyAt = doc["organizedCrime"]["ready_at"] | 0; // Unix timestamp
+
+                // Compute remaining seconds
+                ocServerBaseTime = serverTime;
+                ocMillisBase = millis();
+            }
+        }
+        httpOC.end();
+
+        // ------------------- Ranked War -------------------
+        HTTPClient httpRW;
+        httpRW.begin(client, "https://api.torn.com/v2/faction/rankedwars?offset=0&limit=1&sort=DESC");
+        httpRW.addHeader("Authorization", "ApiKey " + String(apiKey));
+        httpRW.addHeader("accept", "application/json");
+
+        code = httpRW.GET();
+
+        if (code > 0) {
+            String payload = httpRW.getString();
+            // Serial.println(payload); // debug
+            DynamicJsonDocument doc(4096);
+            if (!deserializeJson(doc, payload)) {
+                if (doc.containsKey("rankedwars") && doc["rankedwars"].size() > 0) {
+                    JsonObject war = doc["rankedwars"][0];
+                    rwStartAt = war["start"] | 0;
+                    rwEndAt = war["end"] | 0;
+
+                    rwResult = String((const char*)war["result"]);
+                    if (war.containsKey("opponent")) {
+                        opponentName = String((const char*)war["opponent"]["name"]);
+                    }
+
+                    rwServerBaseTime = serverTime;
+                    rwMillisBase = millis();
+                }
+            }
+        }
+        httpRW.end();
+
+        // -------- Update cooldowns from API --------
+        updateCooldownFromAPI(boosterCD, boosterCooldown);
+        updateCooldownFromAPI(drugCD, drugCooldown);
+        updateCooldownFromAPI(medicalCD, medicalCooldown);
+        updateCooldownFromAPI(travelCD, travelTime);
+        updateCooldownFromAPI(hospitalCD, hospitalTs, serverTime, true);
+        updateCooldownFromAPI(jailCD, jailTs, serverTime, true);
+
+        // -------- Clear sprite and redraw everything --------
+        sprite.fillScreen(TFT_BLACK);
+
+        // Player info
+        sprite.setTextSize(2);
+        sprite.setTextColor(TFT_WHITE);
+        sprite.setCursor(15, 10);
+        sprite.print(name);
+
+        sprite.setTextSize(1);
+        sprite.setTextColor(TFT_WHITE);
+        int idWidth = sprite.textWidth(String(playerId));
+        sprite.setCursor(screenWidth - idWidth - 10, 15);
+        sprite.print(playerId);
+
+        sprite.setCursor(15, 30);
+        sprite.printf("Level: %d", level);
+
+        // Notifications
+        int notifY = 42;
+        sprite.setCursor(15, notifY);
+        sprite.setTextSize(1);
+        if (notificationsCount > 0) {
+            int badgeRadius = 6;
+            int textW = sprite.textWidth(String(notificationsCount));
+            int badgeX = 15 + sprite.textWidth("Notifications: ") + textW/2;
+            int badgeY = notifY + 4;
+            sprite.fillCircle(badgeX, badgeY, badgeRadius, TFT_RED);
+            sprite.setTextColor(TFT_WHITE);
+            sprite.setCursor(badgeX - textW/2, badgeY - 3);
+            sprite.print(notificationsCount);
+            sprite.setTextColor(TFT_WHITE);
+            sprite.setCursor(15, notifY);
+            sprite.print("Notifications:");
+        } else {
+            sprite.setTextColor(TFT_WHITE);
+            sprite.setCursor(15, notifY);
+            sprite.printf("Notifications: %d", notificationsCount);
+        }
+
+        // Money
+        sprite.setTextColor(TFT_WHITE);
+        sprite.setCursor(15, 54);
+        sprite.print("Money: ");
+        int labelWidth = sprite.textWidth("Money: ");
+        sprite.setTextColor(TFT_GREEN);
+        sprite.setCursor(10 + labelWidth, 54);
+        sprite.print("$" + formatMoney(moneyOnHand));
+
+        // Status
+        drawStatus(statusDesc, 92, statusColor(statusCol), 2, 15);
+
+        // Bars
+        int barWidth = screenWidth - 20;
+        int barHeight = 10;
+        int spacing = 25;
+        int startY = 155;
+        drawBar(10, startY, barWidth, barHeight, (float)energyCurrent/energyMax, TFT_GREEN, TFT_DARKGREY, energyCurrent, energyMax, "Energy");
+        drawBar(10, startY + spacing, barWidth, barHeight, (float)nerveCurrent/nerveMax, TFT_RED, TFT_DARKGREY, nerveCurrent, nerveMax, "Nerve");
+        drawBar(10, startY + spacing*2, barWidth, barHeight, (float)happyCurrent/happyMax, TFT_YELLOW, TFT_DARKGREY, happyCurrent, happyMax, "Happy");
+        drawBar(10, startY + spacing*3, barWidth, barHeight, (float)lifeCurrent/lifeMax, TFT_BLUE, TFT_DARKGREY, lifeCurrent, lifeMax, "Life");
+        drawBar(10, startY + spacing*4, barWidth, barHeight, 0, TFT_LIGHTGREY, TFT_DARKGREY, chainCurrent, chainMax, "Chain");
     }
-    ocHttp.end();
 
-    // -------- Set chain countdown for smooth update --------
-    chainTimeoutTick = chainTimeout;
-    lastChainUpdate = millis();
+    // -------- Update cooldowns every second (with flashing) --------
+    updateCooldown(boosterCD);
+    updateCooldown(drugCD);
+    updateCooldown(medicalCD);
+    updateCooldown(travelCD);
+    updateCooldown(hospitalCD);
+    updateCooldown(jailCD);
 
-    // -------- Clear screen & draw info --------
-    tft.fillScreen(TFT_BLACK);
+    // -------- Update chain countdown --------
+    if (chainTimeoutTick > 0 && millis() - lastChainUpdate >= 1000) {
+        chainTimeoutTick--;
+        lastChainUpdate = millis();
 
-    // Player name
-    tft.setTextSize(2);
-    tft.setTextColor(TFT_WHITE);
-    tft.setCursor(15, 10);
-    tft.print(name);
+        int startY = 155 + spacing*4 - 12;
+        int textY = startY + (10 - 8)/2;
+        int timerX = 10 + (screenWidth - 20)/2 - 18;
 
-    // Player ID
-    tft.setTextSize(1);
-    tft.setTextColor(TFT_WHITE);
+        int minutes = chainTimeoutTick / 60;
+        int seconds = chainTimeoutTick % 60;
+        char timerBuf[8];
+        sprintf(timerBuf, "%02d:%02d", minutes, seconds);
 
-    String idStr = String(playerId);                 // convert number to string
-    int textWidth = tft.textWidth(idStr);           // get width in pixels
-    int padding = 10;                               // padding from right edge
-    int cursorX = screenWidth - textWidth - padding; // calculate starting X
-
-    tft.setCursor(cursorX, 15);
-    tft.print(idStr);
-
-    // Level
-    tft.setCursor(15, 30);
-    tft.printf("Level: %d", level);
-
-    // Notifications count
-    int notifY = 45;
-    tft.setCursor(15, notifY);
-    tft.setTextSize(1);
-
-    if (notificationsCount > 0) {
-        // Draw red badge
-        int badgeRadius = 6;
-        int textWidth = tft.textWidth(String(notificationsCount));
-        int badgeX = 15 + tft.textWidth("Notifications: ") + textWidth/2;
-        int badgeY = notifY + 4;
-        tft.fillCircle(badgeX, badgeY, badgeRadius, TFT_RED);
-
-        // Draw number inside badge
-        tft.setTextSize(1);
-        tft.setTextColor(TFT_WHITE);
-        tft.setCursor(badgeX - textWidth/2, badgeY - 3);
-        tft.print(notificationsCount);
-        
-        // Draw the label only, no white number
-        tft.setTextColor(TFT_WHITE);
-        tft.setCursor(15, notifY);
-        tft.print("Notifications:");
-    } else {
-        // No badge, just print the label + count normally
-        tft.setTextColor(TFT_WHITE);
-        tft.setCursor(15, notifY);
-        tft.printf("Notifications: %d", notificationsCount);
+        sprite.fillRect(timerX, textY, 36, 8, TFT_BLACK);
+        sprite.setTextSize(1);
+        sprite.setTextColor(TFT_WHITE);
+        sprite.setCursor(timerX, textY);
+        sprite.print(timerBuf);
     }
 
-    // Draw label in white
-    tft.setTextSize(1);
-    tft.setTextColor(TFT_WHITE);
-    tft.setCursor(15, 60);
-    tft.print("Money: ");
+    // -------- Update Organized Crime countdown every second --------
+    if (ocReadyAt > 0 && millis() - lastOCDraw >= 1000) {
+      lastOCDraw = millis();
 
-    // Draw value in green, right after label
-    int labelWidth = tft.textWidth("Money: ");
-    tft.setTextColor(TFT_GREEN);
-    tft.setCursor(10 + labelWidth, 60);
-    tft.print("$" + formatMoney(moneyOnHand));
-        
-    // Status
-    drawStatus(statusDesc, 90, statusColor(statusCol), 2, 15);
+      long currentServerTime = ocServerBaseTime +
+          (millis() - ocMillisBase) / 1000;
 
-    // -------- Bars --------
-    int barWidth = screenWidth - 20;
-    int barHeight = 10;
-    int spacing = 25;
-    int startY = 155;
+      long remaining = ocReadyAt - currentServerTime;
+      if (remaining < 0) remaining = 0;
 
-    drawBar(10, startY, barWidth, barHeight, (float)energyCurrent/energyMax, TFT_GREEN, TFT_DARKGREY, energyCurrent, energyMax, "Energy");
-    drawBar(10, startY + spacing, barWidth, barHeight, (float)nerveCurrent/nerveMax, TFT_RED, TFT_DARKGREY, nerveCurrent, nerveMax, "Nerve");
-    drawBar(10, startY + spacing*2, barWidth, barHeight, (float)happyCurrent/happyMax, TFT_YELLOW, TFT_DARKGREY, happyCurrent, happyMax, "Happy");
-    drawBar(10, startY + spacing*3, barWidth, barHeight, (float)lifeCurrent/lifeMax, TFT_BLUE, TFT_DARKGREY, lifeCurrent, lifeMax, "Life");
-    drawBar(10, startY + spacing*4, barWidth, barHeight, (float)chainCurrent/chainMax, TFT_LIGHTGREY, TFT_DARKGREY, chainCurrent, chainMax, "Chain");
+      long days    = remaining / 86400;
+      long hours   = (remaining % 86400) / 3600;
+      long minutes = (remaining % 3600) / 60;
+      long seconds = remaining % 60;
 
-    // Update cooldowns
-    updateCooldownFromAPI(boosterCD, boosterCooldown);
-    updateCooldownFromAPI(drugCD, drugCooldown);
-    updateCooldownFromAPI(medicalCD, medicalCooldown);
-    updateCooldownFromAPI(travelCD, travelTime);
-    updateCooldownFromAPI(hospitalCD, hospitalTs, serverTime, true);
-    updateCooldownFromAPI(jailCD, jailTs, serverTime, true);
-  }
+      char timeBuf[20];
+      sprintf(timeBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
 
-  // -------- Update cooldowns every second --------
-  updateCooldown(boosterCD);
-  updateCooldown(drugCD);
-  updateCooldown(medicalCD);
-  updateCooldown(travelCD);
-  updateCooldown(hospitalCD);
-  updateCooldown(jailCD);
+      // Clear area under money
+      sprite.fillRect(15, 66, 180, 12, TFT_BLACK);
 
-  // -------- Update chain countdown every second --------
-  unsigned long nowMillis = millis();
-  if (chainTimeoutTick > 0 && nowMillis - lastChainUpdate >= 1000) {
-    chainTimeoutTick--;
-    lastChainUpdate = nowMillis;
+      sprite.setTextSize(1);
+      sprite.setTextColor(remaining == 0 ? TFT_GREEN : TFT_WHITE);
+      sprite.setCursor(15, 66);
+      sprite.print("OC: ");
+      sprite.print(timeBuf);
+    }
 
-    int startY = 155;
-    int spacing = 25;
-    int barHeight = 10;
-    int chainBarY = startY + spacing*4 - 12;
-    int textY = chainBarY + (barHeight - 8)/2;
-    int labelX = 10;
-    int valueX = screenWidth - 10 - (String(0) + "/" + String(10)).length()*6;
-    int timerX = labelX + (valueX - labelX)/2;
+    // -------- Update Ranked War countdown every second --------
+    if (rwStartAt > 0 && millis() - lastRWDraw >= 1000) {
+        lastRWDraw = millis();
 
-    int minutes = chainTimeoutTick / 60;
-    int seconds = chainTimeoutTick % 60;
-    char timerBuf[8];
-    sprintf(timerBuf, "%02d:%02d", minutes, seconds);
+        long currentServerTime = serverTime + (millis() - lastApiUpdate) / 1000;
+        long remaining = max(0L, rwStartAt - currentServerTime);
 
-    tft.fillRect(timerX, textY, 36, 8, TFT_BLACK);
-    tft.setTextSize(1);
-    tft.setTextColor(TFT_WHITE);
-    tft.setCursor(timerX, textY);
-    tft.print(timerBuf);
-  }
+        if (remaining < 0) remaining = 0;
 
-  // -------- Update Organized Crime countdown every second --------
-  if (ocReadyAt > 0 && millis() - lastOCDraw >= 1000) {
-    lastOCDraw = millis();
+        long days    = remaining / 86400;
+        long hours   = (remaining % 86400) / 3600;
+        long minutes = (remaining % 3600) / 60;
+        long seconds = remaining % 60;
 
-    long currentServerTime = ocServerBaseTime +
-        (millis() - ocMillisBase) / 1000;
+        char rwBuf[16];
+        sprintf(rwBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
 
-    long remaining = ocReadyAt - currentServerTime;
-    if (remaining < 0) remaining = 0;
+        // Clear an area under OC
+        sprite.fillRect(15, 78, 120, 12, TFT_BLACK);
 
-    long days    = remaining / 86400;
-    long hours   = (remaining % 86400) / 3600;
-    long minutes = (remaining % 3600) / 60;
-    long seconds = remaining % 60;
+        sprite.setTextSize(1);
+        sprite.setTextColor(remaining == 0 ? TFT_GREEN : TFT_WHITE);
+        sprite.setCursor(15, 78);
+        sprite.print("RW: ");
+        sprite.print(rwBuf);
+    }
 
-    char timeBuf[20];
-    sprintf(timeBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
+    // -------- Torn clock --------
+    if (serverTime > 0 && millis() - lastClockDraw >= 1000) {
+        lastClockDraw = millis();
 
-    // Clear area under money
-    tft.fillRect(15, 75, 180, 12, TFT_BLACK);
+        long currentServerTime = serverTime + (millis() - lastApiUpdateMillis)/1000;
 
-    tft.setTextSize(1);
-    tft.setTextColor(remaining == 0 ? TFT_GREEN : TFT_WHITE);
-    tft.setCursor(15, 75);
-    tft.print("OC Ready in: ");
-    tft.print(timeBuf);
-  }
-  
-  // -------- Update Torn clock every second (smooth) --------
-  static unsigned long lastClockDraw = 0;
-  if (lastServerTime > 0 && millis() - lastClockDraw >= 1000) {
-      lastClockDraw = millis();
+        time_t rawTime = currentServerTime;
+        struct tm * timeinfo = gmtime(&rawTime);
 
-      long currentServerTime = lastServerTime +
-          (millis() - lastApiUpdateMillis) / 1000;
+        char timeBuffer[16];
+        sprintf(timeBuffer, "%02d:%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
 
-      time_t rawTime = currentServerTime;
-      struct tm * timeinfo = gmtime(&rawTime);
+        int timerWidth = sprite.textWidth(timeBuffer);
+        int timerX = screenWidth - timerWidth - 10;
 
-      char timeBuffer[16];
-      sprintf(timeBuffer, "%02d:%02d:%02d",
-              timeinfo->tm_hour,
-              timeinfo->tm_min,
-              timeinfo->tm_sec);
+        sprite.fillRect(timerX, 30, timerWidth, 10, TFT_BLACK);
+        sprite.setTextSize(1);
+        sprite.setTextColor(TFT_LIGHTGREY);
+        sprite.setCursor(timerX, 30);
+        sprite.print(timeBuffer);
+    }
 
-      // Right-align the timer
-      int timerWidth = tft.textWidth(timeBuffer);
-      int padding = 10;
-      int timerX = screenWidth - timerWidth - padding;
+    // -------- API countdown top-right --------
+    int apiCountdown = APIRefreshSecond - ((millis() - lastApiUpdate)/1000);
+    if (apiCountdown < 0) apiCountdown = 0;
+    char buf[8];
+    sprintf(buf, "%3ds", apiCountdown);
 
-      // Clear previous timer
-      tft.fillRect(timerX, 30, timerWidth, 10, TFT_BLACK);
+    sprite.fillRect(screenWidth - sprite.textWidth(buf) - 10, 45, sprite.textWidth(buf), 12, TFT_BLACK);
+    sprite.setTextSize(1);
+    sprite.setTextColor(TFT_LIGHTGREY);
+    sprite.setCursor(screenWidth - sprite.textWidth(buf) - 10, 45);
+    sprite.print(buf);
 
-      tft.setTextSize(1);
-      tft.setTextColor(TFT_LIGHTGREY);
-      tft.setCursor(timerX, 30);
-      tft.print(timeBuffer);
-  }
+    // -------- Push everything to TFT --------
+    sprite.pushSprite(0, 0);
 
-  // -------- API countdown top-right --------
-  int apiCountdown = 60 - ((millis() - lastApiUpdate) / 1000);
-  if (apiCountdown < 0) apiCountdown = 0;
-  char buf[8];
-  sprintf(buf, "%2ds", apiCountdown);
-
-  // Clear previous text
-  tft.fillRect(screenWidth - tft.textWidth(buf) - 10, 45, tft.textWidth(buf), 12, TFT_BLACK);
-
-  // Draw new countdown
-  tft.setTextSize(1);
-  tft.setTextColor(TFT_LIGHTGREY);
-  tft.setCursor(screenWidth - tft.textWidth(buf) - 10, 45);
-  tft.print(buf);
-
-  delay(100);
+    delay(100);
 }
