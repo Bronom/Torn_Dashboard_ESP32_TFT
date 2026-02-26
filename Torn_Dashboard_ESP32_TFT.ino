@@ -500,11 +500,14 @@ void loop() {
         int barHeight = 10;
         int spacing = 25;
 
+        // Set chain bar color based on cooldown
+        uint16_t chainColor = (chainCooldownTick > 0) ? TFT_CYAN : TFT_LIGHTGREY;
+
         drawBar(10, barStartY, barWidth, barHeight, (float)energyCurrent/energyMax, TFT_GREEN, TFT_DARKGREY, energyCurrent, energyMax, "Energy");
         drawBar(10, barStartY + spacing, barWidth, barHeight, (float)nerveCurrent/nerveMax, TFT_RED, TFT_DARKGREY, nerveCurrent, nerveMax, "Nerve");
         drawBar(10, barStartY + spacing*2, barWidth, barHeight, (float)happyCurrent/happyMax, TFT_YELLOW, TFT_DARKGREY, happyCurrent, happyMax, "Happy");
         drawBar(10, barStartY + spacing*3, barWidth, barHeight, (float)lifeCurrent/lifeMax, TFT_BLUE, TFT_DARKGREY, lifeCurrent, lifeMax, "Life");
-        drawBar(10, barStartY + spacing*4, barWidth, barHeight, (float)chainCurrent/chainMax, TFT_LIGHTGREY, TFT_DARKGREY, chainCurrent, chainMax, "Chain");
+        drawBar(10, barStartY + spacing*4, barWidth, barHeight, (float)chainCurrent/chainMax, chainColor, TFT_DARKGREY, chainCurrent, chainMax, "Chain");
     }
 
     // Update cooldowns every second
