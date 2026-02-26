@@ -295,192 +295,63 @@ void loop() {
     if (now - lastApiUpdate >= (APIRefreshSecond * 1000) || lastApiUpdate == 0) {
         lastApiUpdate = now;
 
+        // ------------------- PLAYER BASIC -------------------
+        // -------- Player API --------
+        HTTPClient http;
+        http.begin("https://api.torn.com/user/?selections=basic,bars,travel,cooldowns,notifications,money,profile&key=" + String(apiKey));
+        int httpCode = http.GET();
+
+        if (httpCode > 0) {
+        String payload = http.getString();
+        DynamicJsonDocument doc(4096);
+        if (deserializeJson(doc, payload)) { http.end(); return; }
+        if (!doc.containsKey("error")) {
+            name = doc["name"] | "Unknown";
+            playerId = doc["player_id"] | 0;
+            level = doc["level"] | 0;
+            statusDesc = doc["status"]["description"] | "Idle";
+            statusCol = doc["status"]["color"] | "white";
+
+            energyCurrent = doc["energy"]["current"] | 0;
+            energyMax     = doc["energy"]["maximum"] | 1;
+            nerveCurrent  = doc["nerve"]["current"] | 0;
+            nerveMax      = doc["nerve"]["maximum"] | 1;
+            happyCurrent  = doc["happy"]["current"] | 0;
+            happyMax      = doc["happy"]["maximum"] | 1;
+            lifeCurrent   = doc["life"]["current"] | 0;
+            lifeMax       = doc["life"]["maximum"] | 1;
+
+            boosterCooldown = doc["cooldowns"]["booster"] | 0;
+            drugCooldown    = doc["cooldowns"]["drug"] | 0;
+            medicalCooldown = doc["cooldowns"]["medical"] | 0;
+
+            travelTime = doc["travel"]["time_left"] | 0;
+
+            serverTime = doc["server_time"] | 0;
+            hospitalTs = doc["states"]["hospital_timestamp"] | 0;
+            jailTs     = doc["states"]["jail_timestamp"] | 0;
+
+            if (doc.containsKey("money_onhand")) {
+            moneyOnHand = doc["money_onhand"] | 0;
+            }
+
+            // -------- Notifications --------
+            if (doc.containsKey("notifications")) {
+            JsonObject notif = doc["notifications"].as<JsonObject>();
+            notificationsCount += notif["messages"] | 0;
+            notificationsCount += notif["events"] | 0;
+            notificationsCount += notif["awards"] | 0;
+            notificationsCount += notif["competition"] | 0;
+            }
+
+            lastApiUpdateMillis = millis();     // ESP millis when we got the server time
+        }
+        }
+        http.end();
+
+
         WiFiClientSecure client;
         client.setInsecure();  // skip cert validation
-
-        // --- Get server time ---
-        HTTPClient httpTime;
-        httpTime.begin(client, "https://api.torn.com/v2/user/timestamp");
-        httpTime.addHeader("Authorization", "ApiKey " + String(apiKey));
-        httpTime.addHeader("accept", "application/json");
-
-        int code = httpTime.GET();
-
-        if (code > 0) {
-            String payload = httpTime.getString();
-            DynamicJsonDocument doc(1024);
-            if (!deserializeJson(doc, payload)) {
-                serverTime = doc["timestamp"] | 0;
-
-                lastApiUpdateMillis = millis();
-            }
-        }
-        httpTime.end();
-
-        // ------------------- PLAYER BASIC -------------------
-        HTTPClient httpPlayer;
-        httpPlayer.begin(client, "https://api.torn.com/v2/user/basic");
-        httpPlayer.addHeader("Authorization", "ApiKey " + String(apiKey));
-        httpPlayer.addHeader("accept", "application/json");
-
-        code = httpPlayer.GET();
-        if (code > 0) {
-            String payload = httpPlayer.getString();
-
-            DynamicJsonDocument doc(40960);
-            DeserializationError err = deserializeJson(doc, payload);
-            if (!err && doc.containsKey("profile")) {
-                JsonObject profile = doc["profile"];
-
-                name = profile["name"] | "Unknown";
-                playerId = profile["id"] | 0;
-                level = profile["level"] | 0;
-
-                if (profile.containsKey("status")) {
-                    JsonObject status = profile["status"];
-                    statusDesc = status["description"] | "Idle";
-                    statusCol  = status["color"] | "white";
-                }
-            }
-        }
-        httpPlayer.end();
-
-
-        // ------------------- BARS -------------------
-        HTTPClient httpBars;
-        httpBars.begin(client, "https://api.torn.com/v2/user/bars");
-        httpBars.addHeader("Authorization", "ApiKey " + String(apiKey));
-        httpBars.addHeader("accept", "application/json");
-
-        code = httpBars.GET();
-        if (code > 0) {
-            String payload = httpBars.getString();
-            DynamicJsonDocument doc(8192);
-            if (!deserializeJson(doc, payload)) {
-                JsonObject bars = doc["bars"];
-                energyCurrent = bars["energy"]["current"] | 0;
-                energyMax     = bars["energy"]["maximum"] | 1;
-
-                nerveCurrent = bars["nerve"]["current"] | 0;
-                nerveMax     = bars["nerve"]["maximum"] | 1;
-
-                happyCurrent = bars["happy"]["current"] | 0;
-                happyMax     = bars["happy"]["maximum"] | 1;
-
-                lifeCurrent = bars["life"]["current"] | 0;
-                lifeMax     = bars["life"]["maximum"] | 1;
-            }
-        }
-        httpBars.end();
-
-
-        // ------------------- MONEY -------------------
-        HTTPClient httpMoney;
-        httpMoney.begin(client, "https://api.torn.com/v2/user/money");
-        httpMoney.addHeader("Authorization", "ApiKey " + String(apiKey));
-        httpMoney.addHeader("accept", "application/json");
-
-        code = httpMoney.GET();
-        if (code > 0) {
-            String payload = httpMoney.getString();
-            DynamicJsonDocument doc(2048);
-            if (!deserializeJson(doc, payload)) {
-                moneyOnHand = doc["money"]["wallet"] | 0;
-            }
-        }
-        httpMoney.end();
-
-
-        // ------------------- NOTIFICATIONS -------------------
-        HTTPClient httpNotif;
-        httpNotif.begin(client, "https://api.torn.com/v2/user/notifications");
-        httpNotif.addHeader("Authorization", "ApiKey " + String(apiKey));
-        httpNotif.addHeader("accept", "application/json");
-        
-        code = httpNotif.GET();
-        if (code > 0) {
-            String payload = httpNotif.getString();
-            DynamicJsonDocument doc(4096);
-            if (!deserializeJson(doc, payload)) {
-              if (doc.containsKey("notifications")) {
-                JsonObject notif = doc["notifications"].as<JsonObject>();
-                notificationsCount = 0;
-
-                notificationsCount += notif["messages"] | 0;
-                notificationsCount += notif["events"] | 0;
-                notificationsCount += notif["awards"] | 0;
-                notificationsCount += notif["competition"] | 0;
-              }
-            }
-        }
-        httpNotif.end();
-
-
-        // ------------------- COOLDOWNS -------------------
-        HTTPClient httpCD;
-        httpCD.begin(client, "https://api.torn.com/v2/user/cooldowns");
-        httpCD.addHeader("Authorization", "ApiKey " + String(apiKey));
-        httpCD.addHeader("accept", "application/json");
-
-        int codeCD = httpCD.GET();
-        if (codeCD > 0) {
-            String payloadCD = httpCD.getString();
-            DynamicJsonDocument cdDoc(8192);
-            if (!deserializeJson(cdDoc, payloadCD)) {
-                JsonObject cd = cdDoc["cooldowns"];
-
-                boosterCooldown = cd["booster"] | 0;
-                drugCooldown    = cd["drug"] | 0;
-                medicalCooldown = cd["medical"] | 0;
-            }
-        }
-        httpCD.end();
-
-
-        // ------------------- TRAVEL -------------------
-        HTTPClient travelHttp;
-        travelHttp.begin(client, "https://api.torn.com/v2/user/travel");
-        travelHttp.addHeader("Authorization", "ApiKey " + String(apiKey));
-        travelHttp.addHeader("accept", "application/json");
-
-        int travelCode = travelHttp.GET();
-        if (travelCode > 0) {
-            String travelPayload = travelHttp.getString();
-            DynamicJsonDocument travelDoc(4096);
-
-            if (!deserializeJson(travelDoc, travelPayload)) {
-                JsonObject travel = travelDoc["travel"];
-
-                travelTime = travel["time_left"] | 0;
-            }
-        }
-        travelHttp.end();
-
-        // ------------------- Profile / Status ----------------------
-        HTTPClient statusHttp;
-        statusHttp.begin(client, "https://api.torn.com/v2/user/profile");
-        statusHttp.addHeader("Authorization", "ApiKey " + String(apiKey));
-        statusHttp.addHeader("accept", "application/json");
-
-        int statusCode = statusHttp.GET();
-        if (statusCode > 0) {
-            String payload = statusHttp.getString();
-
-            DynamicJsonDocument doc(16384);
-            DeserializationError err = deserializeJson(doc, payload);
-            if (!err) {
-                JsonObject profile = doc["profile"];
-                JsonObject status  = profile["status"];
-
-                String state       = status["state"] | "";
-                long untilTs       = status["until"] | 0;
-
-                // Update your cooldowns
-                if (state == "Hospital") hospitalTs = untilTs;
-                else if (state == "Jail") jailTs = untilTs;
-            }
-        }
-        statusHttp.end();
 
         // ------------------- CHAIN -------------------
         HTTPClient httpChain;
@@ -489,7 +360,7 @@ void loop() {
         httpChain.addHeader("Authorization", "ApiKey " + String(apiKey));
         httpChain.addHeader("accept", "application/json");
 
-        code = httpChain.GET();
+        int code = httpChain.GET();
         chainCurrent = 0;
         chainMax = 0;
         chainTimeout = 0;
