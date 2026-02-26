@@ -3,19 +3,7 @@
 #include <ArduinoJson.h>
 #include <TFT_eSPI.h>
 #include <WiFiClientSecure.h>
-
-// ------------------- WiFi Setup -------------------
-struct WifiCred {
-  const char* ssid;
-  const char* password;
-};
-
-WifiCred wifiList[] = {
-  {"YOUR_WIFI_SSID", "YOUR_WIFI_PASSWORD"}
-};
-
-const char* apiKey = "YOUR_TORN_API_KEY";
-const int wifiCount = sizeof(wifiList) / sizeof(wifiList[0]);
+#include "secrets.h"
 
 // ------------------- TFT Setup -------------------
 TFT_eSPI tft = TFT_eSPI();
