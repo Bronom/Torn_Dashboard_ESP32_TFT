@@ -4,7 +4,7 @@
 #include <TFT_eSPI.h>
 #include <WiFiClientSecure.h>
 
-//  -- Wifi ---
+// ------------------- WiFi Setup -------------------
 struct WifiCred {
   const char* ssid;
   const char* password;
@@ -15,30 +15,27 @@ WifiCred wifiList[] = {
 };
 
 const char* apiKey = "YOUR_TORN_API_KEY";
-
 const int wifiCount = sizeof(wifiList) / sizeof(wifiList[0]);
 
-int APIRefreshSecond = 60;
-
-TFT_eSPI tft = TFT_eSPI(); // TFT instance
-TFT_eSprite sprite = TFT_eSprite(&tft); // create sprite linked to tft
+// ------------------- TFT Setup -------------------
+TFT_eSPI tft = TFT_eSPI();
+TFT_eSprite sprite = TFT_eSprite(&tft);
 
 bool screenOn = true;
 unsigned long lastTouchTime = 0;
-
 int screenWidth = tft.width();
 int screenHeight = tft.height();
 
 // ------------------- Cooldown Struct -------------------
 struct Cooldown {
-  int ticktime;          // current countdown
-  int apiValue;          // last value from API
+  int ticktime;          
+  int apiValue;          
   const char* label;
   int x, y;
   unsigned long lastUpdate;
 };
 
-// ------------------- Setup cooldown X/Y -------------------
+// ------------------- Cooldowns -------------------
 int cooldownY = 270;
 int leftX   = 20;
 int centerX = screenWidth / 2 - 30;
@@ -48,50 +45,71 @@ Cooldown boosterCD = {0, 0, "Booster", leftX, cooldownY, 0};
 Cooldown drugCD    = {0, 0, "Drug", centerX, cooldownY, 0};
 Cooldown medicalCD = {0, 0, "Medical", rightX, cooldownY, 0};
 
-// Extra timers: Travel, Hospital, Jail
 int extraY = cooldownY + 25;
-int extraLeftX   = 20;
-int extraCenterX = screenWidth / 2 - 30;
-int extraRightX  = screenWidth - 70;
+Cooldown travelCD   = {0, 0, "Travel", leftX, extraY, 0};
+Cooldown hospitalCD = {0, 0, "Hospital", centerX, extraY, 0};
+Cooldown jailCD     = {0, 0, "Jail", rightX, extraY, 0};
 
-Cooldown travelCD   = {0, 0, "Travel", extraLeftX, extraY, 0};
-Cooldown hospitalCD = {0, 0, "Hospital", extraCenterX, extraY, 0};
-Cooldown jailCD     = {0, 0, "Jail", extraRightX, extraY, 0};
-
-long travelServerBaseTime = 0;
-unsigned long travelMillisBase = 0;
-unsigned long lastTravelDraw = 0;
-
-// ------------------- Chain timer -------------------
-int chainTimeoutTick = 0;
-unsigned long lastChainUpdate = 0;
-unsigned long chainServerBaseTime = 0;
-unsigned long chainMillisBase = 0;
-
+// ------------------- Chain -------------------
 int chainCurrent = 0;
 int chainMax = 0;
 int chainTimeout = 0;
+int chainTimeoutTick = 0;
+unsigned long lastChainUpdate = 0;
 
-// ------------------- Organized Crime timer -------------------
+// ------------------- Organized Crime -------------------
 long ocReadyAt = 0;
-long ocServerBaseTime = 0;
 unsigned long ocMillisBase = 0;
-unsigned long lastOCDraw = 0;       // for 1 sec refresh
+long ocServerBaseTime = 0;
+unsigned long lastOCDraw = 0;
 
-// ------------------- Next Ranked War -------------------
+// ------------------- Ranked War -------------------
 long rwStartAt = 0;
 long rwEndAt = 0;
 String opponentName = "";
 String rwResult = "";
-long rwServerBaseTime = 0;
 unsigned long rwMillisBase = 0;
+long rwServerBaseTime = 0;
 unsigned long lastRWDraw = 0;
 
-// ------------------- Torn clock -------------------
-unsigned long lastClockDraw = 0;
+// ------------------- Torn Clock -------------------
 long serverTime = 0;
+unsigned long lastClockDraw = 0;
 
-// ------------------- Functions -------------------
+// ------------------- Settings -------------------
+int APIRefreshSecond = 60;
+
+// ------------------- Global Variables -------------------
+unsigned long lastApiUpdate = 0;
+unsigned long lastApiUpdateMillis = 0;
+
+String name = "Unknown";
+int playerId = 0;
+int level = 0;
+String statusDesc = "Idle";
+String statusCol = "white";
+
+int energyCurrent = 0, energyMax = 1;
+int nerveCurrent  = 0, nerveMax  = 1;
+int happyCurrent  = 0, happyMax  = 1;
+int lifeCurrent   = 0, lifeMax   = 1;
+
+int boosterCooldown = 0;
+int drugCooldown    = 0;
+int medicalCooldown = 0;
+
+int travelTime = 0;
+long hospitalTs = 0;
+long jailTs = 0;
+
+int spacing = 25;
+int barStartY = 155;
+int barHeight = 10;
+
+long moneyOnHand = 0;
+int notificationsCount = 0;
+
+// ------------------- Utility Functions -------------------
 uint16_t statusColor(String color) {
   color.toLowerCase();
   if (color == "green") return TFT_GREEN;
@@ -103,10 +121,20 @@ uint16_t statusColor(String color) {
   return TFT_WHITE;
 }
 
-// ------------------- Draw Status -------------------
+String formatMoney(long amount) {
+    String s = String(amount);
+    int len = s.length();
+    for (int i = len - 3; i > 0; i -= 3) {
+        s = s.substring(0, i) + "," + s.substring(i);
+    }
+    return s;
+}
+
+// ------------------- Draw Functions -------------------
 void drawStatus(String text, int y, uint16_t textColor, int textSize = 2, int padding = 5) {
     sprite.setTextSize(textSize);
     sprite.setTextColor(textColor, TFT_BLACK);
+
     int maxWidth = screenWidth - 2 * padding;
     int cursorX = padding;
     int cursorY = y;
@@ -118,27 +146,22 @@ void drawStatus(String text, int y, uint16_t textColor, int textSize = 2, int pa
         if (end == -1) end = text.length();
         String word = text.substring(start, end);
 
-        int wordWidth = sprite.textWidth(word);
-
-        if (cursorX + wordWidth > padding + maxWidth) {
+        if (cursorX + sprite.textWidth(word) > padding + maxWidth) {
             cursorX = padding;
             cursorY += 8 * textSize + 2;
         }
 
         sprite.setCursor(cursorX, cursorY);
         sprite.print(word);
-        cursorX += wordWidth + spaceWidth;
+        cursorX += sprite.textWidth(word) + spaceWidth;
         start = end + 1;
     }
 }
 
-// Draw bar (Energy, Nerve, Happy, Life, Chain)
 void drawBar(int x, int y, int width, int height, float percent, uint16_t fillColor, uint16_t bgColor, int currentValue, int maxValue, const char* label) {
-    int spacing = 12;
-    sprite.fillRect(x, y, width, height, bgColor);
     if (percent > 1) percent = 1;
-    int fillWidth = (int)(width * percent);
-    sprite.fillRect(x, y, fillWidth, height, fillColor);
+    sprite.fillRect(x, y, width, height, bgColor);
+    sprite.fillRect(x, y, (int)(width * percent), height, fillColor);
     sprite.drawRect(x, y, width, height, TFT_WHITE);
 
     sprite.setTextSize(1);
@@ -151,10 +174,10 @@ void drawBar(int x, int y, int width, int height, float percent, uint16_t fillCo
     int textHeight = 8;
     int textY = y + (height - textHeight)/2;
 
-    sprite.setCursor(10, textY - spacing);
+    sprite.setCursor(10, textY - 12);
     sprite.print(label);
 
-    sprite.setCursor((screenWidth - textWidth) - 10, textY - spacing);
+    sprite.setCursor((screenWidth - textWidth) - 10, textY - 12);
     sprite.print(buf);
 }
 
@@ -165,8 +188,7 @@ void updateCooldown(Cooldown &cd, bool hideWhenZero = false) {
         if (cd.ticktime > 0) cd.ticktime--;
         cd.lastUpdate = now;
 
-        // Clear the previous timer in the sprite
-        sprite.fillRect(cd.x, cd.y, 80, 20, TFT_BLACK); 
+        sprite.fillRect(cd.x, cd.y, 80, 20, TFT_BLACK);
 
         if (cd.ticktime > 0 || !hideWhenZero) {
             int hours = cd.ticktime / 3600;
@@ -178,26 +200,22 @@ void updateCooldown(Cooldown &cd, bool hideWhenZero = false) {
             else sprintf(buf, "%02d:%02d:%02d", hours, minutes, seconds);
 
             sprite.setTextSize(1);
-            sprite.setTextColor((cd.ticktime == 0 && !hideWhenZero) ? TFT_GREEN : TFT_WHITE);
 
-            // Draw label
+            // ALWAYS WHITE for the label
+            sprite.setTextColor(TFT_WHITE);
             sprite.setCursor(cd.x, cd.y);
             sprite.print(cd.label);
 
-            // Draw timer under label
-            sprite.setCursor(cd.x, cd.y + 10); // 10px below label
+            // Green only for the timer/value if you want
+            sprite.setTextColor(cd.ticktime == 0 && !hideWhenZero ? TFT_GREEN : TFT_WHITE);
+            sprite.setCursor(cd.x, cd.y + 10);
             sprite.print(buf);
         }
     }
 }
 
 void updateCooldownFromAPI(Cooldown &cd, int newValue, long serverTime = 0, bool isAbsolute = false) {
-  if (isAbsolute) {
-    long remaining = max(0L, newValue - serverTime);
-    cd.ticktime = remaining;
-  } else {
-    cd.ticktime = max(0, newValue);
-  }
+  cd.ticktime = isAbsolute ? max(0L, newValue - serverTime) : max(0, newValue);
   cd.apiValue = newValue;
 }
 
@@ -214,30 +232,22 @@ void connectWiFi() {
 
   for (int i = 0; i < wifiCount; i++) {
     tft.fillRect(0, 40, screenWidth, 45, TFT_BLACK);
-    int padding = 15;
-    tft.setCursor(padding, 40);
+    tft.setCursor(15, 40);
     tft.setTextSize(2);
-    tft.print("Trying:");
-    tft.setCursor(padding, 65);
-    tft.setTextSize(2);
-    tft.print(wifiList[i].ssid);
+    tft.print("Trying: ");
+    tft.println(wifiList[i].ssid);
 
     WiFi.begin(wifiList[i].ssid, wifiList[i].password);
-
     unsigned long startTime = millis();
-    const unsigned long timeout = 10000;
-    while (millis() - startTime < timeout) {
+    while (millis() - startTime < 10000) {
       if (WiFi.status() == WL_CONNECTED) {
         tft.fillScreen(TFT_BLACK);
-        tft.setCursor(padding, 10);
-        tft.setTextSize(2);
+        tft.setCursor(15, 10);
         tft.println("WiFi Connected!");
-        tft.setCursor(padding, 40);
-        tft.setTextSize(2);
-        tft.printf("SSID: %s", wifiList[i].ssid);
-        tft.setCursor(padding, 65);
-        tft.setTextSize(2);
-        tft.printf("IP: %s", WiFi.localIP().toString().c_str());
+        tft.setCursor(15, 35);
+        tft.printf("SSID: %s\n", wifiList[i].ssid);
+        tft.setCursor(15, 60);
+        tft.printf("IP: %s\n", WiFi.localIP().toString().c_str());
         return;
       }
       delay(500);
@@ -248,17 +258,7 @@ void connectWiFi() {
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_RED);
   tft.setCursor(15, 10);
-  tft.setTextSize(2);
   tft.println("No WiFi Found!");
-}
-
-String formatMoney(long amount) {
-    String s = String(amount);
-    int len = s.length();
-    for (int i = len - 3; i > 0; i -= 3) {
-        s = s.substring(0, i) + "," + s.substring(i);
-    }
-    return s;
 }
 
 // ------------------- Setup -------------------
@@ -270,50 +270,26 @@ void setup() {
   digitalWrite(TFT_BL, HIGH);
 
   sprite.setColorDepth(8);
-  sprite.createSprite(screenWidth, screenHeight); // full-screen buffer
-  sprite.fillScreen(TFT_BLACK); // clear buffer
+  sprite.createSprite(screenWidth, screenHeight);
+  sprite.fillScreen(TFT_BLACK);
 
   connectWiFi();
 }
-// ------------------- Loop -------------------
+
+// ------------------- Main Loop -------------------
 void loop() {
-    uint16_t touchX, touchY;
-    if (tft.getTouch(&touchX, &touchY)) {
-        if (millis() - lastTouchTime > 300) {
-            screenOn = !screenOn;
-            lastTouchTime = millis();
-            digitalWrite(TFT_BL, screenOn ? HIGH : LOW);
-        }
-    }
+  // Touch screen toggle
+  uint16_t touchX, touchY;
+  if (tft.getTouch(&touchX, &touchY) && millis() - lastTouchTime > 300) {
+      screenOn = !screenOn;
+      digitalWrite(TFT_BL, screenOn ? HIGH : LOW);
+      lastTouchTime = millis();
+  }
 
-    if (WiFi.status() != WL_CONNECTED) {
-        WiFi.reconnect();
-        delay(1000);
-        return;
-    }
-    
-    // ---------------- Global layout variables ----------------
-    int startY = 155;   // starting Y position for bars
-    int spacing = 25;   // vertical spacing between bars
-    int barHeight = 10; // height of bars
+  if (WiFi.status() != WL_CONNECTED) { WiFi.reconnect(); delay(1000); return; }
 
-    unsigned long now = millis();
-    static unsigned long lastApiUpdate = 0;
-    static unsigned long lastApiUpdateMillis = 0;
-
-    int energyCurrent = 0, energyMax = 1;
-    int nerveCurrent = 0, nerveMax = 1;
-    int happyCurrent = 0, happyMax = 1;
-    int lifeCurrent = 0, lifeMax = 1;
-    int boosterCooldown = 0, drugCooldown = 0, medicalCooldown = 0;
-    int travelTime = 0;
-    long hospitalTs = 0, jailTs = 0;
-    String name = "Unknown";
-    int playerId = 0, level = 0;
-    String statusDesc = "Idle", statusCol = "white";
-    int notificationsCount = 0;
-    long moneyOnHand = 0;
-
+  static unsigned long lastApiUpdate = 0;
+  unsigned long now = millis();
 
     // -------- API fetch every 60s --------
     if (now - lastApiUpdate >= (APIRefreshSecond * 1000) || lastApiUpdate == 0) {
@@ -350,7 +326,6 @@ void loop() {
         code = httpPlayer.GET();
         if (code > 0) {
             String payload = httpPlayer.getString();
-            //Serial.println(payload); // debug
 
             DynamicJsonDocument doc(40960);
             DeserializationError err = deserializeJson(doc, payload);
@@ -421,13 +396,21 @@ void loop() {
         httpNotif.begin(client, "https://api.torn.com/v2/user/notifications");
         httpNotif.addHeader("Authorization", "ApiKey " + String(apiKey));
         httpNotif.addHeader("accept", "application/json");
-
+        
         code = httpNotif.GET();
         if (code > 0) {
             String payload = httpNotif.getString();
             DynamicJsonDocument doc(4096);
             if (!deserializeJson(doc, payload)) {
-                notificationsCount = doc["notifications"]["count"] | 0;
+              if (doc.containsKey("notifications")) {
+                JsonObject notif = doc["notifications"].as<JsonObject>();
+                notificationsCount = 0;
+
+                notificationsCount += notif["messages"] | 0;
+                notificationsCount += notif["events"] | 0;
+                notificationsCount += notif["awards"] | 0;
+                notificationsCount += notif["competition"] | 0;
+              }
             }
         }
         httpNotif.end();
@@ -513,7 +496,7 @@ void loop() {
 
         if (code > 0) {
             String payload = httpChain.getString();
-            //Serial.println(payload); // debug
+
             DynamicJsonDocument doc(2048);
             if (!deserializeJson(doc, payload)) {
                 if (doc.containsKey("chain")) {
@@ -558,7 +541,7 @@ void loop() {
 
         if (code > 0) {
             String payload = httpRW.getString();
-            // Serial.println(payload); // debug
+
             DynamicJsonDocument doc(4096);
             if (!deserializeJson(doc, payload)) {
                 if (doc.containsKey("rankedwars") && doc["rankedwars"].size() > 0) {
@@ -605,7 +588,7 @@ void loop() {
         sprite.printf("Level: %d", level);
 
         // Notifications
-        int notifY = 42;
+        int notifY = 43;
         sprite.setCursor(15, notifY);
         sprite.setTextSize(1);
         if (notificationsCount > 0) {
@@ -628,42 +611,41 @@ void loop() {
 
         // Money
         sprite.setTextColor(TFT_WHITE);
-        sprite.setCursor(15, 54);
+        sprite.setCursor(15, 55);
         sprite.print("Money: ");
         int labelWidth = sprite.textWidth("Money: ");
         sprite.setTextColor(TFT_GREEN);
-        sprite.setCursor(10 + labelWidth, 54);
+        sprite.setCursor(10 + labelWidth, 55);
         sprite.print("$" + formatMoney(moneyOnHand));
 
         // Status
-        drawStatus(statusDesc, 92, statusColor(statusCol), 2, 15);
+        drawStatus(statusDesc, 93, statusColor(statusCol), 2, 15);
 
         // Bars
         int barWidth = screenWidth - 20;
         int barHeight = 10;
         int spacing = 25;
-        int startY = 155;
-        drawBar(10, startY, barWidth, barHeight, (float)energyCurrent/energyMax, TFT_GREEN, TFT_DARKGREY, energyCurrent, energyMax, "Energy");
-        drawBar(10, startY + spacing, barWidth, barHeight, (float)nerveCurrent/nerveMax, TFT_RED, TFT_DARKGREY, nerveCurrent, nerveMax, "Nerve");
-        drawBar(10, startY + spacing*2, barWidth, barHeight, (float)happyCurrent/happyMax, TFT_YELLOW, TFT_DARKGREY, happyCurrent, happyMax, "Happy");
-        drawBar(10, startY + spacing*3, barWidth, barHeight, (float)lifeCurrent/lifeMax, TFT_BLUE, TFT_DARKGREY, lifeCurrent, lifeMax, "Life");
-        drawBar(10, startY + spacing*4, barWidth, barHeight, 0, TFT_LIGHTGREY, TFT_DARKGREY, chainCurrent, chainMax, "Chain");
+        drawBar(10, barStartY, barWidth, barHeight, (float)energyCurrent/energyMax, TFT_GREEN, TFT_DARKGREY, energyCurrent, energyMax, "Energy");
+        drawBar(10, barStartY + spacing, barWidth, barHeight, (float)nerveCurrent/nerveMax, TFT_RED, TFT_DARKGREY, nerveCurrent, nerveMax, "Nerve");
+        drawBar(10, barStartY + spacing*2, barWidth, barHeight, (float)happyCurrent/happyMax, TFT_YELLOW, TFT_DARKGREY, happyCurrent, happyMax, "Happy");
+        drawBar(10, barStartY + spacing*3, barWidth, barHeight, (float)lifeCurrent/lifeMax, TFT_BLUE, TFT_DARKGREY, lifeCurrent, lifeMax, "Life");
+        drawBar(10, barStartY + spacing*4, barWidth, barHeight, 0, TFT_LIGHTGREY, TFT_DARKGREY, chainCurrent, chainMax, "Chain");
     }
 
-    // -------- Update cooldowns every second (with flashing) --------
-    updateCooldown(boosterCD);
-    updateCooldown(drugCD);
-    updateCooldown(medicalCD);
-    updateCooldown(travelCD);
-    updateCooldown(hospitalCD);
-    updateCooldown(jailCD);
+  // Update cooldowns every second
+  updateCooldown(boosterCD);
+  updateCooldown(drugCD);
+  updateCooldown(medicalCD);
+  updateCooldown(travelCD);
+  updateCooldown(hospitalCD);
+  updateCooldown(jailCD);
 
     // -------- Update chain countdown --------
     if (chainTimeoutTick > 0 && millis() - lastChainUpdate >= 1000) {
         chainTimeoutTick--;
         lastChainUpdate = millis();
 
-        int startY = 155 + spacing*4 - 12;
+        int startY = barStartY + spacing*4 - 12;
         int textY = startY + (10 - 8)/2;
         int timerX = 10 + (screenWidth - 20)/2 - 18;
 
@@ -698,11 +680,11 @@ void loop() {
       sprintf(timeBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
 
       // Clear area under money
-      sprite.fillRect(15, 66, 180, 12, TFT_BLACK);
+      sprite.fillRect(15, 67, 180, 12, TFT_BLACK);
 
       sprite.setTextSize(1);
       sprite.setTextColor(remaining == 0 ? TFT_GREEN : TFT_WHITE);
-      sprite.setCursor(15, 66);
+      sprite.setCursor(15, 67);
       sprite.print("OC: ");
       sprite.print(timeBuf);
     }
@@ -725,11 +707,11 @@ void loop() {
         sprintf(rwBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
 
         // Clear an area under OC
-        sprite.fillRect(15, 78, 120, 12, TFT_BLACK);
+        sprite.fillRect(15, 79, 120, 12, TFT_BLACK);
 
         sprite.setTextSize(1);
         sprite.setTextColor(remaining == 0 ? TFT_GREEN : TFT_WHITE);
-        sprite.setCursor(15, 78);
+        sprite.setCursor(15, 79);
         sprite.print("RW: ");
         sprite.print(rwBuf);
     }
