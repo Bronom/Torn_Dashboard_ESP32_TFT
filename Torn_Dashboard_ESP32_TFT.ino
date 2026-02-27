@@ -272,6 +272,8 @@ void setup() {
   connectWiFi();
 }
     
+WiFiClientSecure client;
+
 // ------------------- Main Loop -------------------
 void loop() {
   // Touch screen toggle
@@ -295,11 +297,13 @@ void loop() {
         // -------- Player API --------
         HTTPClient http;
         http.begin("https://api.torn.com/user/?selections=basic,bars,travel,cooldowns,notifications,money,profile&key=" + String(apiKey));
+        http.setTimeout(5000);
         int httpCode = http.GET();
 
         if (httpCode > 0) {
             String payload = http.getString();
             DynamicJsonDocument doc(4096);
+            doc.clear();
 
             if (deserializeJson(doc, payload)) {
                 apiError = true;
@@ -340,6 +344,7 @@ void loop() {
                 // -------- Notifications --------
                 if (doc.containsKey("notifications")) {
                 JsonObject notif = doc["notifications"].as<JsonObject>();
+                notificationsCount = 0;
                 notificationsCount += notif["messages"] | 0;
                 notificationsCount += notif["events"] | 0;
                 notificationsCount += notif["awards"] | 0;
@@ -355,8 +360,6 @@ void loop() {
         }
         http.end();
 
-
-        WiFiClientSecure client;
         client.setInsecure();  // skip cert validation
 
         // ------------------- CHAIN -------------------
@@ -366,6 +369,7 @@ void loop() {
         httpChain.addHeader("Authorization", "ApiKey " + String(apiKey));
         httpChain.addHeader("accept", "application/json");
 
+        httpChain.setTimeout(5000);
         int code = httpChain.GET();
         chainCurrent = 0;
         chainMax = 0;
@@ -373,8 +377,9 @@ void loop() {
 
         if (code > 0) {
             String payload = httpChain.getString();
-
             DynamicJsonDocument doc(2048);
+            doc.clear();
+
             if (!deserializeJson(doc, payload)) {
                 if (doc.containsKey("chain")) {
                     chainCurrent = doc["chain"]["current"] | 0;
@@ -404,10 +409,12 @@ void loop() {
         httpOC.addHeader("Authorization", "ApiKey " + String(apiKey));
         httpOC.addHeader("accept", "application/json");
 
+        httpOC.setTimeout(5000);
         int ocCode = httpOC.GET();
         if (ocCode > 0) {
             String payload = httpOC.getString();
             DynamicJsonDocument doc(2048);
+            doc.clear();
 
             if (!deserializeJson(doc, payload)) {
                 ocReadyAt = doc["organizedCrime"]["ready_at"] | 0; // Unix timestamp
@@ -425,12 +432,15 @@ void loop() {
         httpRW.addHeader("Authorization", "ApiKey " + String(apiKey));
         httpRW.addHeader("accept", "application/json");
 
+        httpRW.setTimeout(5000);
         code = httpRW.GET();
 
         if (code > 0) {
             String payload = httpRW.getString();
 
             DynamicJsonDocument doc(4096);
+            doc.clear();
+
             if (!deserializeJson(doc, payload)) {
                 if (doc.containsKey("rankedwars") && doc["rankedwars"].size() > 0) {
                     JsonObject war = doc["rankedwars"][0];
@@ -518,12 +528,13 @@ void loop() {
 
             // Set chain bar color based on cooldown
             uint16_t chainColor = (chainCooldownTick > 0) ? TFT_CYAN : TFT_LIGHTGREY;
+            float chainPercent = chainMax > 0 ? (float)chainCurrent / chainMax : 0;            
 
             drawBar(10, barStartY, barWidth, barHeight, (float)energyCurrent/energyMax, TFT_GREEN, TFT_DARKGREY, energyCurrent, energyMax, "Energy");
             drawBar(10, barStartY + spacing, barWidth, barHeight, (float)nerveCurrent/nerveMax, TFT_RED, TFT_DARKGREY, nerveCurrent, nerveMax, "Nerve");
             drawBar(10, barStartY + spacing*2, barWidth, barHeight, (float)happyCurrent/happyMax, TFT_YELLOW, TFT_DARKGREY, happyCurrent, happyMax, "Happy");
             drawBar(10, barStartY + spacing*3, barWidth, barHeight, (float)lifeCurrent/lifeMax, TFT_BLUE, TFT_DARKGREY, lifeCurrent, lifeMax, "Life");
-            drawBar(10, barStartY + spacing*4, barWidth, barHeight, (float)chainCurrent/chainMax, chainColor, TFT_DARKGREY, chainCurrent, chainMax, "Chain");
+            drawBar(10, barStartY + spacing*4, barWidth, barHeight, chainPercent, chainColor, TFT_DARKGREY, chainCurrent, chainMax, "Chain");
         }
     }
 
