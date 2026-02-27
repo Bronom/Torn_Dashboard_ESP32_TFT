@@ -76,6 +76,8 @@ int APIRefreshSecond = 60;
 // ------------------- Global Variables -------------------
 unsigned long lastApiUpdate = 0;
 unsigned long lastApiUpdateMillis = 0;
+bool apiError = false;
+String lastApiError = "";
 
 String name = "Unknown";
 int playerId = 0;
@@ -269,31 +271,6 @@ void setup() {
 
   connectWiFi();
 }
-
-// ------------------- Show Error -------------------
-void showError(String msg) {
-    sprite.fillScreen(TFT_BLACK);
-
-    // --- Header Message ---
-    String errorHeader = "API ERROR";
-    sprite.setTextSize(2); 
-    int textHeaderWidth = sprite.textWidth(errorHeader);
-    sprite.setTextColor(TFT_RED);
-    sprite.setCursor((screenWidth - textHeaderWidth) / 2, 50);
-    sprite.println(errorHeader);
-
-    // --- Error Message ---
-    sprite.setTextSize(1);
-    int textWidth = sprite.textWidth(msg);
-    sprite.setTextColor(TFT_RED);
-    sprite.setCursor((screenWidth - textWidth) / 2, 80);
-    sprite.println(msg);
-
-    sprite.pushSprite(0, 0);
-
-    delay(APIRefreshSecond * 1000);
-}
-
     
 // ------------------- Main Loop -------------------
 void loop() {
@@ -323,8 +300,14 @@ void loop() {
         if (httpCode > 0) {
             String payload = http.getString();
             DynamicJsonDocument doc(4096);
-            if (deserializeJson(doc, payload)) { http.end(); return; }
+
+            if (deserializeJson(doc, payload)) {
+                apiError = true;
+                lastApiError = "JSON Parse Error";
+            } 
+
             if (!doc.containsKey("error")) {
+                apiError = false;
                 name = doc["name"] | "Unknown";
                 playerId = doc["player_id"] | 0;
                 level = doc["level"] | 0;
@@ -366,7 +349,8 @@ void loop() {
                 lastApiUpdateMillis = millis();     // ESP millis when we got the server time
             }
             else{
-                showError(doc["error"]["error"]);
+                apiError = true;
+                lastApiError = doc["error"]["error"].as<String>();
             }
         }
         http.end();
@@ -474,70 +458,73 @@ void loop() {
         updateCooldownFromAPI(jailCD, jailTs, serverTime, true);
 
         // -------- Clear sprite and redraw everything --------
-        sprite.fillScreen(TFT_BLACK);
+        if (!apiError) {
 
-        // Player info
-        sprite.setTextSize(2);
-        sprite.setTextColor(TFT_WHITE);
-        sprite.setCursor(15, 10);
-        sprite.print(name);
+            sprite.fillScreen(TFT_BLACK);
 
-        sprite.setTextSize(1);
-        sprite.setTextColor(TFT_WHITE);
-        int idWidth = sprite.textWidth(String(playerId));
-        sprite.setCursor(screenWidth - idWidth - 10, 15);
-        sprite.print(playerId);
-
-        sprite.setCursor(15, 30);
-        sprite.printf("Level: %d", level);
-
-        // Notifications
-        int notifY = 43;
-        sprite.setCursor(15, notifY);
-        sprite.setTextSize(1);
-        if (notificationsCount > 0) {
-            int badgeRadius = 6;
-            int textW = sprite.textWidth(String(notificationsCount));
-            int badgeX = 15 + sprite.textWidth("Notifications: ") + textW/2;
-            int badgeY = notifY + 4;
-            sprite.fillCircle(badgeX, badgeY, badgeRadius, TFT_RED);
+            // Player info
+            sprite.setTextSize(2);
             sprite.setTextColor(TFT_WHITE);
-            sprite.setCursor(badgeX - textW/2, badgeY - 3);
-            sprite.print(notificationsCount);
+            sprite.setCursor(15, 10);
+            sprite.print(name);
+
+            sprite.setTextSize(1);
             sprite.setTextColor(TFT_WHITE);
+            int idWidth = sprite.textWidth(String(playerId));
+            sprite.setCursor(screenWidth - idWidth - 10, 15);
+            sprite.print(playerId);
+
+            sprite.setCursor(15, 30);
+            sprite.printf("Level: %d", level);
+
+            // Notifications
+            int notifY = 43;
             sprite.setCursor(15, notifY);
-            sprite.print("Notifications:");
-        } else {
+            sprite.setTextSize(1);
+            if (notificationsCount > 0) {
+                int badgeRadius = 6;
+                int textW = sprite.textWidth(String(notificationsCount));
+                int badgeX = 15 + sprite.textWidth("Notifications: ") + textW/2;
+                int badgeY = notifY + 4;
+                sprite.fillCircle(badgeX, badgeY, badgeRadius, TFT_RED);
+                sprite.setTextColor(TFT_WHITE);
+                sprite.setCursor(badgeX - textW/2, badgeY - 3);
+                sprite.print(notificationsCount);
+                sprite.setTextColor(TFT_WHITE);
+                sprite.setCursor(15, notifY);
+                sprite.print("Notifications:");
+            } else {
+                sprite.setTextColor(TFT_WHITE);
+                sprite.setCursor(15, notifY);
+                sprite.printf("Notifications: %d", notificationsCount);
+            }
+
+            // Money
             sprite.setTextColor(TFT_WHITE);
-            sprite.setCursor(15, notifY);
-            sprite.printf("Notifications: %d", notificationsCount);
+            sprite.setCursor(15, 55);
+            sprite.print("Money: ");
+            int labelWidth = sprite.textWidth("Money: ");
+            sprite.setTextColor(TFT_GREEN);
+            sprite.setCursor(10 + labelWidth, 55);
+            sprite.print("$" + formatMoney(moneyOnHand));
+
+            // Status
+            drawStatus(statusDesc, 91, statusColor(statusCol), 2, 15);
+
+            // Bars
+            int barWidth = screenWidth - 20;
+            int barHeight = 10;
+            int spacing = 25;
+
+            // Set chain bar color based on cooldown
+            uint16_t chainColor = (chainCooldownTick > 0) ? TFT_CYAN : TFT_LIGHTGREY;
+
+            drawBar(10, barStartY, barWidth, barHeight, (float)energyCurrent/energyMax, TFT_GREEN, TFT_DARKGREY, energyCurrent, energyMax, "Energy");
+            drawBar(10, barStartY + spacing, barWidth, barHeight, (float)nerveCurrent/nerveMax, TFT_RED, TFT_DARKGREY, nerveCurrent, nerveMax, "Nerve");
+            drawBar(10, barStartY + spacing*2, barWidth, barHeight, (float)happyCurrent/happyMax, TFT_YELLOW, TFT_DARKGREY, happyCurrent, happyMax, "Happy");
+            drawBar(10, barStartY + spacing*3, barWidth, barHeight, (float)lifeCurrent/lifeMax, TFT_BLUE, TFT_DARKGREY, lifeCurrent, lifeMax, "Life");
+            drawBar(10, barStartY + spacing*4, barWidth, barHeight, (float)chainCurrent/chainMax, chainColor, TFT_DARKGREY, chainCurrent, chainMax, "Chain");
         }
-
-        // Money
-        sprite.setTextColor(TFT_WHITE);
-        sprite.setCursor(15, 55);
-        sprite.print("Money: ");
-        int labelWidth = sprite.textWidth("Money: ");
-        sprite.setTextColor(TFT_GREEN);
-        sprite.setCursor(10 + labelWidth, 55);
-        sprite.print("$" + formatMoney(moneyOnHand));
-
-        // Status
-        drawStatus(statusDesc, 91, statusColor(statusCol), 2, 15);
-
-        // Bars
-        int barWidth = screenWidth - 20;
-        int barHeight = 10;
-        int spacing = 25;
-
-        // Set chain bar color based on cooldown
-        uint16_t chainColor = (chainCooldownTick > 0) ? TFT_CYAN : TFT_LIGHTGREY;
-
-        drawBar(10, barStartY, barWidth, barHeight, (float)energyCurrent/energyMax, TFT_GREEN, TFT_DARKGREY, energyCurrent, energyMax, "Energy");
-        drawBar(10, barStartY + spacing, barWidth, barHeight, (float)nerveCurrent/nerveMax, TFT_RED, TFT_DARKGREY, nerveCurrent, nerveMax, "Nerve");
-        drawBar(10, barStartY + spacing*2, barWidth, barHeight, (float)happyCurrent/happyMax, TFT_YELLOW, TFT_DARKGREY, happyCurrent, happyMax, "Happy");
-        drawBar(10, barStartY + spacing*3, barWidth, barHeight, (float)lifeCurrent/lifeMax, TFT_BLUE, TFT_DARKGREY, lifeCurrent, lifeMax, "Life");
-        drawBar(10, barStartY + spacing*4, barWidth, barHeight, (float)chainCurrent/chainMax, chainColor, TFT_DARKGREY, chainCurrent, chainMax, "Chain");
     }
 
     // Update cooldowns every second
@@ -688,6 +675,13 @@ void loop() {
     sprite.setTextColor(TFT_WHITE);
     sprite.setCursor(screenWidth - sprite.textWidth(buf) - 10, 45);
     sprite.print(buf);
+
+    // Small API error indicator
+    if (apiError) {
+        sprite.fillCircle(screenWidth - 8, 8, 4, TFT_RED);
+    } else {
+        sprite.fillCircle(screenWidth - 8, 8, 4, TFT_BLACK);
+    }
 
     // -------- Push everything to TFT --------
     sprite.pushSprite(0, 0);
