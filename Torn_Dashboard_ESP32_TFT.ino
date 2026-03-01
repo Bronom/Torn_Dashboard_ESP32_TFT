@@ -65,6 +65,7 @@ String rwResult = "";
 unsigned long rwMillisBase = 0;
 long rwServerBaseTime = 0;
 unsigned long lastRWDraw = 0;
+bool rwActive = false;   // true if war is running (winner is null)
 
 // ------------------- Torn Clock -------------------
 long serverTime = 0;
@@ -447,7 +448,12 @@ void loop() {
                     rwStartAt = war["start"] | 0;
                     rwEndAt = war["end"] | 0;
 
-                    rwResult = String((const char*)war["result"]);
+                    if (war["winner"].isNull()) {
+                        rwActive = true;
+                    } else {
+                        rwActive = false;
+                    }
+
                     if (war.containsKey("opponent")) {
                         opponentName = String((const char*)war["opponent"]["name"]);
                     }
@@ -626,30 +632,44 @@ void loop() {
       sprite.print(timeBuf);
     }
 
-    // -------- Update Ranked War countdown every second --------
+    // -------- Update Ranked War timer every second --------
     if (rwStartAt > 0 && millis() - lastRWDraw >= 1000) {
         lastRWDraw = millis();
 
-        long currentServerTime = serverTime + (millis() - lastApiUpdate) / 1000;
-        long remaining = max(0L, rwStartAt - currentServerTime);
+        long currentServerTime = serverTime + (millis() - lastApiUpdateMillis) / 1000;
 
-        if (remaining < 0) remaining = 0;
+        long displayTime = 0;
+        bool showGreen = false;
 
-        long days    = remaining / 86400;
-        long hours   = (remaining % 86400) / 3600;
-        long minutes = (remaining % 3600) / 60;
-        long seconds = remaining % 60;
+        if (rwActive) {
+            // War is running → show elapsed time
+            displayTime = max(0L, currentServerTime - rwStartAt);
+            showGreen = true;
+        } else {
+            // War not started → countdown to start
+            displayTime = max(0L, rwStartAt - currentServerTime);
+        }
+
+        long days    = displayTime / 86400;
+        long hours   = (displayTime % 86400) / 3600;
+        long minutes = (displayTime % 3600) / 60;
+        long seconds = displayTime % 60;
 
         char rwBuf[16];
         sprintf(rwBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
 
-        // Clear an area under OC
-        sprite.fillRect(15, 79, 120, 12, TFT_BLACK);
+        // Clear area
+        sprite.fillRect(15, 79, 160, 12, TFT_BLACK);
 
         sprite.setTextSize(1);
-        sprite.setTextColor(remaining == 0 ? TFT_GREEN : TFT_WHITE);
+
+        // ----- LABEL ALWAYS WHITE -----
+        sprite.setTextColor(TFT_WHITE);
         sprite.setCursor(15, 79);
         sprite.print("RW: ");
+
+        // ----- TIMER COLOR ONLY -----
+        sprite.setTextColor(showGreen ? TFT_GREEN : TFT_WHITE);
         sprite.print(rwBuf);
     }
 
