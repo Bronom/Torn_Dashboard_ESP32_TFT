@@ -65,6 +65,7 @@ String rwResult = "";
 unsigned long rwMillisBase = 0;
 long rwServerBaseTime = 0;
 unsigned long lastRWDraw = 0;
+bool rwActive = false;   // true if war is running (winner is null)
 
 // ------------------- Torn Clock -------------------
 long serverTime = 0;
@@ -272,6 +273,8 @@ void setup() {
   connectWiFi();
 }
     
+WiFiClientSecure client;
+
 // ------------------- Main Loop -------------------
 void loop() {
   // Touch screen toggle
@@ -295,11 +298,13 @@ void loop() {
         // -------- Player API --------
         HTTPClient http;
         http.begin("https://api.torn.com/user/?selections=basic,bars,travel,cooldowns,notifications,money,profile&key=" + String(apiKey));
+        http.setTimeout(5000);
         int httpCode = http.GET();
 
         if (httpCode > 0) {
             String payload = http.getString();
             DynamicJsonDocument doc(4096);
+            doc.clear();
 
             if (deserializeJson(doc, payload)) {
                 apiError = true;
@@ -340,6 +345,7 @@ void loop() {
                 // -------- Notifications --------
                 if (doc.containsKey("notifications")) {
                 JsonObject notif = doc["notifications"].as<JsonObject>();
+                notificationsCount = 0;
                 notificationsCount += notif["messages"] | 0;
                 notificationsCount += notif["events"] | 0;
                 notificationsCount += notif["awards"] | 0;
@@ -355,8 +361,6 @@ void loop() {
         }
         http.end();
 
-
-        WiFiClientSecure client;
         client.setInsecure();  // skip cert validation
 
         // ------------------- CHAIN -------------------
@@ -366,6 +370,7 @@ void loop() {
         httpChain.addHeader("Authorization", "ApiKey " + String(apiKey));
         httpChain.addHeader("accept", "application/json");
 
+        httpChain.setTimeout(5000);
         int code = httpChain.GET();
         chainCurrent = 0;
         chainMax = 0;
@@ -373,8 +378,9 @@ void loop() {
 
         if (code > 0) {
             String payload = httpChain.getString();
-
             DynamicJsonDocument doc(2048);
+            doc.clear();
+
             if (!deserializeJson(doc, payload)) {
                 if (doc.containsKey("chain")) {
                     chainCurrent = doc["chain"]["current"] | 0;
@@ -404,10 +410,12 @@ void loop() {
         httpOC.addHeader("Authorization", "ApiKey " + String(apiKey));
         httpOC.addHeader("accept", "application/json");
 
+        httpOC.setTimeout(5000);
         int ocCode = httpOC.GET();
         if (ocCode > 0) {
             String payload = httpOC.getString();
             DynamicJsonDocument doc(2048);
+            doc.clear();
 
             if (!deserializeJson(doc, payload)) {
                 ocReadyAt = doc["organizedCrime"]["ready_at"] | 0; // Unix timestamp
@@ -425,19 +433,27 @@ void loop() {
         httpRW.addHeader("Authorization", "ApiKey " + String(apiKey));
         httpRW.addHeader("accept", "application/json");
 
+        httpRW.setTimeout(5000);
         code = httpRW.GET();
 
         if (code > 0) {
             String payload = httpRW.getString();
 
             DynamicJsonDocument doc(4096);
+            doc.clear();
+
             if (!deserializeJson(doc, payload)) {
                 if (doc.containsKey("rankedwars") && doc["rankedwars"].size() > 0) {
                     JsonObject war = doc["rankedwars"][0];
                     rwStartAt = war["start"] | 0;
                     rwEndAt = war["end"] | 0;
 
-                    rwResult = String((const char*)war["result"]);
+                    if (war["winner"].isNull()) {
+                        rwActive = true;
+                    } else {
+                        rwActive = false;
+                    }
+
                     if (war.containsKey("opponent")) {
                         opponentName = String((const char*)war["opponent"]["name"]);
                     }
@@ -518,12 +534,13 @@ void loop() {
 
             // Set chain bar color based on cooldown
             uint16_t chainColor = (chainCooldownTick > 0) ? TFT_CYAN : TFT_LIGHTGREY;
+            float chainPercent = chainMax > 0 ? (float)chainCurrent / chainMax : 0;            
 
             drawBar(10, barStartY, barWidth, barHeight, (float)energyCurrent/energyMax, TFT_GREEN, TFT_DARKGREY, energyCurrent, energyMax, "Energy");
             drawBar(10, barStartY + spacing, barWidth, barHeight, (float)nerveCurrent/nerveMax, TFT_RED, TFT_DARKGREY, nerveCurrent, nerveMax, "Nerve");
             drawBar(10, barStartY + spacing*2, barWidth, barHeight, (float)happyCurrent/happyMax, TFT_YELLOW, TFT_DARKGREY, happyCurrent, happyMax, "Happy");
             drawBar(10, barStartY + spacing*3, barWidth, barHeight, (float)lifeCurrent/lifeMax, TFT_BLUE, TFT_DARKGREY, lifeCurrent, lifeMax, "Life");
-            drawBar(10, barStartY + spacing*4, barWidth, barHeight, (float)chainCurrent/chainMax, chainColor, TFT_DARKGREY, chainCurrent, chainMax, "Chain");
+            drawBar(10, barStartY + spacing*4, barWidth, barHeight, chainPercent, chainColor, TFT_DARKGREY, chainCurrent, chainMax, "Chain");
         }
     }
 
@@ -589,39 +606,12 @@ void loop() {
 
     // -------- Update Organized Crime countdown every second --------
     if (ocReadyAt > 0 && millis() - lastOCDraw >= 1000) {
-      lastOCDraw = millis();
+        lastOCDraw = millis();
 
-      long currentServerTime = ocServerBaseTime +
-          (millis() - ocMillisBase) / 1000;
+        long currentServerTime = ocServerBaseTime +
+            (millis() - ocMillisBase) / 1000;
 
-      long remaining = ocReadyAt - currentServerTime;
-      if (remaining < 0) remaining = 0;
-
-      long days    = remaining / 86400;
-      long hours   = (remaining % 86400) / 3600;
-      long minutes = (remaining % 3600) / 60;
-      long seconds = remaining % 60;
-
-      char timeBuf[20];
-      sprintf(timeBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
-
-      // Clear area under money
-      sprite.fillRect(15, 67, 180, 12, TFT_BLACK);
-
-      sprite.setTextSize(1);
-      sprite.setTextColor(remaining == 0 ? TFT_GREEN : TFT_WHITE);
-      sprite.setCursor(15, 67);
-      sprite.print("OC: ");
-      sprite.print(timeBuf);
-    }
-
-    // -------- Update Ranked War countdown every second --------
-    if (rwStartAt > 0 && millis() - lastRWDraw >= 1000) {
-        lastRWDraw = millis();
-
-        long currentServerTime = serverTime + (millis() - lastApiUpdate) / 1000;
-        long remaining = max(0L, rwStartAt - currentServerTime);
-
+        long remaining = ocReadyAt - currentServerTime;
         if (remaining < 0) remaining = 0;
 
         long days    = remaining / 86400;
@@ -629,16 +619,61 @@ void loop() {
         long minutes = (remaining % 3600) / 60;
         long seconds = remaining % 60;
 
+        char timeBuf[20];
+        sprintf(timeBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
+
+        // Clear area under money
+        sprite.fillRect(15, 67, 180, 12, TFT_BLACK);
+        sprite.setTextSize(1);
+
+        // ----- LABEL ALWAYS WHITE -----
+        sprite.setTextColor(TFT_WHITE);
+        sprite.setCursor(15, 67);
+        sprite.print("OC: ");
+
+        // ----- TIMER COLOR ONLY -----
+        sprite.setTextColor(remaining == 0 ? TFT_GREEN : TFT_WHITE);
+        sprite.print(timeBuf);
+    }
+
+    // -------- Update Ranked War timer every second --------
+    if (rwStartAt > 0 && millis() - lastRWDraw >= 1000) {
+        lastRWDraw = millis();
+
+        long currentServerTime = serverTime + (millis() - lastApiUpdateMillis) / 1000;
+
+        long displayTime = 0;
+        bool showGreen = false;
+
+        if (rwActive) {
+            // War is running → show elapsed time
+            displayTime = max(0L, currentServerTime - rwStartAt);
+            showGreen = true;
+        } else {
+            // War not started → countdown to start
+            displayTime = max(0L, rwStartAt - currentServerTime);
+        }
+
+        long days    = displayTime / 86400;
+        long hours   = (displayTime % 86400) / 3600;
+        long minutes = (displayTime % 3600) / 60;
+        long seconds = displayTime % 60;
+
         char rwBuf[16];
         sprintf(rwBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
 
-        // Clear an area under OC
-        sprite.fillRect(15, 79, 120, 12, TFT_BLACK);
+        // Clear area
+        sprite.fillRect(15, 79, 160, 12, TFT_BLACK);
 
         sprite.setTextSize(1);
-        sprite.setTextColor(remaining == 0 ? TFT_GREEN : TFT_WHITE);
+
+        // ----- LABEL ALWAYS WHITE -----
+        sprite.setTextColor(TFT_WHITE);
         sprite.setCursor(15, 79);
         sprite.print("RW: ");
+
+        // ----- TIMER COLOR ONLY -----
+        sprite.setTextColor(showGreen ? TFT_GREEN : TFT_WHITE);
         sprite.print(rwBuf);
     }
 
