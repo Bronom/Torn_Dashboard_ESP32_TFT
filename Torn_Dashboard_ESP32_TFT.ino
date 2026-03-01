@@ -606,30 +606,34 @@ void loop() {
 
     // -------- Update Organized Crime countdown every second --------
     if (ocReadyAt > 0 && millis() - lastOCDraw >= 1000) {
-      lastOCDraw = millis();
+        lastOCDraw = millis();
 
-      long currentServerTime = ocServerBaseTime +
-          (millis() - ocMillisBase) / 1000;
+        long currentServerTime = ocServerBaseTime +
+            (millis() - ocMillisBase) / 1000;
 
-      long remaining = ocReadyAt - currentServerTime;
-      if (remaining < 0) remaining = 0;
+        long remaining = ocReadyAt - currentServerTime;
+        if (remaining < 0) remaining = 0;
 
-      long days    = remaining / 86400;
-      long hours   = (remaining % 86400) / 3600;
-      long minutes = (remaining % 3600) / 60;
-      long seconds = remaining % 60;
+        long days    = remaining / 86400;
+        long hours   = (remaining % 86400) / 3600;
+        long minutes = (remaining % 3600) / 60;
+        long seconds = remaining % 60;
 
-      char timeBuf[20];
-      sprintf(timeBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
+        char timeBuf[20];
+        sprintf(timeBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
 
-      // Clear area under money
-      sprite.fillRect(15, 67, 180, 12, TFT_BLACK);
+        // Clear area under money
+        sprite.fillRect(15, 67, 180, 12, TFT_BLACK);
+        sprite.setTextSize(1);
 
-      sprite.setTextSize(1);
-      sprite.setTextColor(remaining == 0 ? TFT_GREEN : TFT_WHITE);
-      sprite.setCursor(15, 67);
-      sprite.print("OC: ");
-      sprite.print(timeBuf);
+        // ----- LABEL ALWAYS WHITE -----
+        sprite.setTextColor(TFT_WHITE);
+        sprite.setCursor(15, 67);
+        sprite.print("OC: ");
+
+        // ----- TIMER COLOR ONLY -----
+        sprite.setTextColor(remaining == 0 ? TFT_GREEN : TFT_WHITE);
+        sprite.print(timeBuf);
     }
 
     // -------- Update Ranked War timer every second --------
