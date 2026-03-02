@@ -1,14 +1,14 @@
 # Torn_Dashboard_ESP32_TFT
  Torn Dashboard - ESP32 WROOM DA + TFT 2.8 Inch LCD Touch with ILI9341 Driver
 
-- Wifi must be 2.4Ghz
+*** Wifi must be 2.4Ghz ***
 
-Part List : 
+# Part List : 
 2.8 Inch SPI TFT LCD Touch ILI9341
 ESP32-32D
 Electrical Wire
 
-#Pinout : 
+# Pinout : 
 | Function    | ESP32 Pin | Notes                                             |
 | ----------- | --------- | ------------------------------------------------- |
 | **MOSI**    | 23        | SPI data to TFT                                   |
@@ -28,15 +28,15 @@ Electrical Wire
 | **IRQ / PEN** | 22        | Some libraries support touch IRQ pin |
 
 
-#Library : 
+# Library : 
 TFT_eSPO by Bodmer
 XPT2046_Touchscreen by Paul Stoffregen
 Wifi by Arduino
 HttpClient by Adrian McEwen
 ArduinoJson by Benoit Blanchon
 
-#Board Manager :
+# Board Manager :
 esp32 by Espressif Systems
 
-secrets.h : 
+# secrets.h : 
 Credential for Wifi and API KEY
