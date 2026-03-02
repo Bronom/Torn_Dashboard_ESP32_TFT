@@ -1,7 +1,7 @@
-#include <WiFi.h>
-#include <HTTPClient.h>
-#include <ArduinoJson.h>
-#include <TFT_eSPI.h>
+#include <WiFi.h> // Wifi by Arduino
+#include <HTTPClient.h> // HttpClient by Adrian McEwen
+#include <ArduinoJson.h> // ArduinoJson by Benoit Blanchon
+#include <TFT_eSPI.h> // TFT_eSPO by Bodmer
 #include <WiFiClientSecure.h>
 #include "secrets.h"
 
@@ -552,7 +552,6 @@ void loop() {
     updateCooldown(hospitalCD);
     updateCooldown(jailCD);
 
-    // -------- Smart Chain Countdown --------
     // -------- Update chain countdown every second --------
     if (millis() - lastChainUpdate >= 1000) {
         lastChainUpdate = millis();
