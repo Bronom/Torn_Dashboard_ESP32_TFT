@@ -294,8 +294,7 @@ void loop() {
     if (now - lastApiUpdate >= (APIRefreshSecond * 1000) || lastApiUpdate == 0) {
         lastApiUpdate = now;
 
-        // ------------------- PLAYER BASIC -------------------
-        // -------- Player API --------
+        // ------------------- PLAYER BASIC API -------------------
         HTTPClient http;
         http.begin("https://api.torn.com/user/?selections=basic,bars,travel,cooldowns,notifications,money,profile&key=" + String(apiKey));
         http.setTimeout(5000);
@@ -339,17 +338,17 @@ void loop() {
                 jailTs     = doc["states"]["jail_timestamp"] | 0;
 
                 if (doc.containsKey("money_onhand")) {
-                moneyOnHand = doc["money_onhand"] | 0;
+                    moneyOnHand = doc["money_onhand"] | 0;
                 }
 
                 // -------- Notifications --------
                 if (doc.containsKey("notifications")) {
-                JsonObject notif = doc["notifications"].as<JsonObject>();
-                notificationsCount = 0;
-                notificationsCount += notif["messages"] | 0;
-                notificationsCount += notif["events"] | 0;
-                notificationsCount += notif["awards"] | 0;
-                notificationsCount += notif["competition"] | 0;
+                    JsonObject notif = doc["notifications"].as<JsonObject>();
+                    notificationsCount = 0;
+                    notificationsCount += notif["messages"] | 0;
+                    notificationsCount += notif["events"] | 0;
+                    notificationsCount += notif["awards"] | 0;
+                    notificationsCount += notif["competition"] | 0;
                 }
 
                 lastApiUpdateMillis = millis();     // ESP millis when we got the server time
@@ -639,17 +638,22 @@ void loop() {
     if (rwStartAt > 0 && millis() - lastRWDraw >= 1000) {
         lastRWDraw = millis();
 
-        long currentServerTime = serverTime + (millis() - lastApiUpdateMillis) / 1000;
+        long currentServerTime = serverTime +
+            (millis() - lastApiUpdateMillis) / 1000;
 
         long displayTime = 0;
-        bool showGreen = false;
+        bool warRunningNow = false;
 
-        if (rwActive) {
-            // War is running → show elapsed time
-            displayTime = max(0L, currentServerTime - rwStartAt);
-            showGreen = true;
+        // Determine if war is running
+        if (currentServerTime >= rwStartAt && (rwEndAt == 0 || currentServerTime <= rwEndAt)) {
+            warRunningNow = true;
+        }
+
+        if (warRunningNow) {
+            // WAR ACTIVE -> elapsed time
+            displayTime = currentServerTime - rwStartAt;
         } else {
-            // War not started → countdown to start
+            // BEFORE START -> countdown
             displayTime = max(0L, rwStartAt - currentServerTime);
         }
 
@@ -658,11 +662,11 @@ void loop() {
         long minutes = (displayTime % 3600) / 60;
         long seconds = displayTime % 60;
 
-        char rwBuf[16];
+        char rwBuf[20];
         sprintf(rwBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
 
         // Clear area
-        sprite.fillRect(15, 79, 160, 12, TFT_BLACK);
+        sprite.fillRect(15, 79, 200, 12, TFT_BLACK);
 
         sprite.setTextSize(1);
 
@@ -671,8 +675,18 @@ void loop() {
         sprite.setCursor(15, 79);
         sprite.print("RW: ");
 
-        // ----- TIMER COLOR ONLY -----
-        sprite.setTextColor(showGreen ? TFT_GREEN : TFT_WHITE);
+        // ----- COLOR LOGIC -----
+        uint16_t rwColor = TFT_WHITE;
+
+        if (warRunningNow) {
+            rwColor = TFT_RED;                      // War running
+        } else if (displayTime <= 3600) {
+            rwColor = TFT_YELLOW;                   // < 1 hour before start
+        } else {
+            rwColor = TFT_WHITE;                    // > 1 hour before start
+        }
+
+        sprite.setTextColor(rwColor);
         sprite.print(rwBuf);
     }
 
