@@ -18,11 +18,11 @@ int screenHeight = tft.height();
 
 // ------------------- Cooldown Struct -------------------
 struct Cooldown {
-  int ticktime;          
+  int ticktime;
+  long endTimestamp;
   int apiValue;          
   const char* label;
   int x, y;
-  unsigned long lastUpdate;
 };
 
 // ------------------- Cooldowns -------------------
@@ -31,14 +31,14 @@ int leftX   = 20;
 int centerX = screenWidth / 2 - 21;
 int rightX  = screenWidth - 60;
 
-Cooldown boosterCD = {0, 0, "Booster", leftX, cooldownY, 0};
-Cooldown drugCD    = {0, 0, "Drug", centerX, cooldownY, 0};
-Cooldown medicalCD = {0, 0, "Medical", rightX, cooldownY, 0};
+Cooldown boosterCD  = {0, 0, 0, "Booster",  leftX,  cooldownY};
+Cooldown drugCD     = {0, 0, 0, "Drug",     centerX, cooldownY};
+Cooldown medicalCD  = {0, 0, 0, "Medical",  rightX, cooldownY};
 
 int extraY = cooldownY + 25;
-Cooldown travelCD   = {0, 0, "Travel", leftX, extraY, 0};
-Cooldown hospitalCD = {0, 0, "Hospital", centerX, extraY, 0};
-Cooldown jailCD     = {0, 0, "Jail", rightX, extraY, 0};
+Cooldown travelCD   = {0, 0, 0, "Travel",   leftX,  extraY};
+Cooldown hospitalCD = {0, 0, 0, "Hospital", centerX, extraY};
+Cooldown jailCD     = {0, 0, 0, "Jail",     rightX, extraY};
 
 // ------------------- Chain -------------------
 int chainCurrent = 0;
@@ -68,7 +68,6 @@ unsigned long lastRWDraw = 0;
 bool rwActive = false;   // true if war is running (winner is null)
 int rwScoreUs = 0;
 int rwScoreEnemy = 0;
-String rwFactionName = "";
 
 // ------------------- Torn Clock -------------------
 long serverTime = 0;
@@ -184,39 +183,48 @@ void drawBar(int x, int y, int width, int height, float percent, uint16_t fillCo
 
 // ------------------- Cooldown Functions -------------------
 void updateCooldown(Cooldown &cd, bool hideWhenZero = false) {
-    unsigned long now = millis();
-    if (now - cd.lastUpdate >= 1000) {
-        if (cd.ticktime > 0) cd.ticktime--;
-        cd.lastUpdate = now;
 
-        sprite.fillRect(cd.x, cd.y, 80, 20, TFT_BLACK);
+    long currentServerTime = serverTime +
+        (millis() - lastApiUpdateMillis) / 1000;
 
-        if (cd.ticktime > 0 || !hideWhenZero) {
-            int hours = cd.ticktime / 3600;
-            int minutes = (cd.ticktime % 3600) / 60;
-            int seconds = cd.ticktime % 60;
+    long remaining = cd.endTimestamp - currentServerTime;
+    if (remaining < 0) remaining = 0;
 
-            char buf[16];
-            if (cd.ticktime == 0 && !hideWhenZero) strcpy(buf, "READY");
-            else sprintf(buf, "%02d:%02d:%02d", hours, minutes, seconds);
+    sprite.fillRect(cd.x, cd.y, 80, 20, TFT_BLACK);
 
-            sprite.setTextSize(1);
+    if (remaining > 0 || !hideWhenZero) {
 
-            // ALWAYS WHITE for the label
-            sprite.setTextColor(TFT_WHITE);
-            sprite.setCursor(cd.x, cd.y);
-            sprite.print(cd.label);
+        int hours = remaining / 3600;
+        int minutes = (remaining % 3600) / 60;
+        int seconds = remaining % 60;
 
-            // Green only for the timer/value if you want
-            sprite.setTextColor(cd.ticktime == 0 && !hideWhenZero ? TFT_GREEN : TFT_WHITE);
-            sprite.setCursor(cd.x, cd.y + 10);
-            sprite.print(buf);
-        }
+        char buf[16];
+
+        if (remaining == 0 && !hideWhenZero)
+            strcpy(buf, "READY");
+        else
+            sprintf(buf, "%02d:%02d:%02d", hours, minutes, seconds);
+
+        sprite.setTextSize(1);
+
+        sprite.setTextColor(TFT_WHITE);
+        sprite.setCursor(cd.x, cd.y);
+        sprite.print(cd.label);
+
+        sprite.setTextColor(remaining == 0 ? TFT_GREEN : TFT_WHITE);
+        sprite.setCursor(cd.x, cd.y + 10);
+        sprite.print(buf);
     }
 }
 
 void updateCooldownFromAPI(Cooldown &cd, int newValue, long serverTime = 0, bool isAbsolute = false) {
-  cd.ticktime = isAbsolute ? max(0L, newValue - serverTime) : max(0, newValue);
+
+  if (isAbsolute) {
+      cd.endTimestamp = newValue;
+  } else {
+      cd.endTimestamp = serverTime + newValue;
+  }
+
   cd.apiValue = newValue;
 }
 
@@ -291,7 +299,6 @@ void loop() {
 
   if (WiFi.status() != WL_CONNECTED) { WiFi.reconnect(); delay(1000); return; }
 
-  static unsigned long lastApiUpdate = 0;
   unsigned long now = millis();
 
     // -------- API fetch --------
@@ -359,7 +366,7 @@ void loop() {
                     notificationsCount += notif["competition"] | 0;
                 }
 
-                lastApiUpdateMillis = millis();     // ESP millis when we got the server time
+                lastApiUpdateMillis = millis();
             }
             else{
                 apiError = true;
@@ -425,7 +432,7 @@ void loop() {
             doc.clear();
 
             if (!deserializeJson(doc, payload)) {
-                ocReadyAt = doc["organizedCrime"]["ready_at"] | 0; // Unix timestamp
+                ocReadyAt = doc["organizedCrime"]["ready_at"] | 0;
 
                 // Compute remaining seconds
                 ocServerBaseTime = serverTime;
@@ -460,10 +467,6 @@ void loop() {
                     } else {
                         rwActive = false;
                     }
-
-                    if (war.containsKey("opponent")) {
-                        opponentName = String((const char*)war["opponent"]["name"]);
-                    }
                     
                     if (war.containsKey("factions")) {
 
@@ -480,7 +483,7 @@ void loop() {
                             int score1 = faction1["score"] | 0;
                             int score2 = faction2["score"] | 0;
 
-                            // Determine which faction is yours
+                            // Determine player faction
                             if (id1 == factionId) {
                                 rwScoreUs = score1;
                                 rwScoreEnemy = score2;
@@ -499,10 +502,10 @@ void loop() {
         httpRW.end();
 
         // -------- Update cooldowns from API --------
-        updateCooldownFromAPI(boosterCD, boosterCooldown);
-        updateCooldownFromAPI(drugCD, drugCooldown);
-        updateCooldownFromAPI(medicalCD, medicalCooldown);
-        updateCooldownFromAPI(travelCD, travelTime);
+        updateCooldownFromAPI(boosterCD, boosterCooldown, serverTime);
+        updateCooldownFromAPI(drugCD, drugCooldown, serverTime);
+        updateCooldownFromAPI(medicalCD, medicalCooldown, serverTime);
+        updateCooldownFromAPI(travelCD, travelTime, serverTime);
         updateCooldownFromAPI(hospitalCD, hospitalTs, serverTime, true);
         updateCooldownFromAPI(jailCD, jailTs, serverTime, true);
 
