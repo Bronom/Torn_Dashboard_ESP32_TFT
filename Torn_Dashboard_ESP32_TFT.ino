@@ -18,11 +18,11 @@ int screenHeight = tft.height();
 
 // ------------------- Cooldown Struct -------------------
 struct Cooldown {
-  int ticktime;          
+  int ticktime;
+  long endTimestamp;
   int apiValue;          
   const char* label;
   int x, y;
-  unsigned long lastUpdate;
 };
 
 // ------------------- Cooldowns -------------------
@@ -31,14 +31,14 @@ int leftX   = 20;
 int centerX = screenWidth / 2 - 21;
 int rightX  = screenWidth - 60;
 
-Cooldown boosterCD = {0, 0, "Booster", leftX, cooldownY, 0};
-Cooldown drugCD    = {0, 0, "Drug", centerX, cooldownY, 0};
-Cooldown medicalCD = {0, 0, "Medical", rightX, cooldownY, 0};
+Cooldown boosterCD  = {0, 0, 0, "Booster",  leftX,  cooldownY};
+Cooldown drugCD     = {0, 0, 0, "Drug",     centerX, cooldownY};
+Cooldown medicalCD  = {0, 0, 0, "Medical",  rightX, cooldownY};
 
 int extraY = cooldownY + 25;
-Cooldown travelCD   = {0, 0, "Travel", leftX, extraY, 0};
-Cooldown hospitalCD = {0, 0, "Hospital", centerX, extraY, 0};
-Cooldown jailCD     = {0, 0, "Jail", rightX, extraY, 0};
+Cooldown travelCD   = {0, 0, 0, "Travel",   leftX,  extraY};
+Cooldown hospitalCD = {0, 0, 0, "Hospital", centerX, extraY};
+Cooldown jailCD     = {0, 0, 0, "Jail",     rightX, extraY};
 
 // ------------------- Chain -------------------
 int chainCurrent = 0;
@@ -49,11 +49,10 @@ unsigned long lastChainUpdate = 0;
 
 int chainCooldown = 0;          // cooldown from API
 int chainCooldownTick = 0;      // local ticking value
-unsigned long lastChainCooldownUpdate = 0;
 
 // ------------------- Organized Crime -------------------
 long ocReadyAt = 0;
-unsigned long ocMillisBase = 0;
+unsigned long lastOCUpdate = 0;
 long ocServerBaseTime = 0;
 unsigned long lastOCDraw = 0;
 
@@ -62,10 +61,12 @@ long rwStartAt = 0;
 long rwEndAt = 0;
 String opponentName = "";
 String rwResult = "";
-unsigned long rwMillisBase = 0;
+unsigned long lastRWUpdate = 0;
 long rwServerBaseTime = 0;
 unsigned long lastRWDraw = 0;
 bool rwActive = false;   // true if war is running (winner is null)
+int rwScoreUs = 0;
+int rwScoreEnemy = 0;
 
 // ------------------- Torn Clock -------------------
 long serverTime = 0;
@@ -105,6 +106,8 @@ int barHeight = 10;
 
 long moneyOnHand = 0;
 int notificationsCount = 0;
+int factionId = 0;
+int httpCode = 0;
 
 // ------------------- Utility Functions -------------------
 uint16_t statusColor(String color) {
@@ -180,39 +183,48 @@ void drawBar(int x, int y, int width, int height, float percent, uint16_t fillCo
 
 // ------------------- Cooldown Functions -------------------
 void updateCooldown(Cooldown &cd, bool hideWhenZero = false) {
-    unsigned long now = millis();
-    if (now - cd.lastUpdate >= 1000) {
-        if (cd.ticktime > 0) cd.ticktime--;
-        cd.lastUpdate = now;
 
-        sprite.fillRect(cd.x, cd.y, 80, 20, TFT_BLACK);
+    long currentServerTime = serverTime +
+        (millis() - lastApiUpdateMillis) / 1000.0;
 
-        if (cd.ticktime > 0 || !hideWhenZero) {
-            int hours = cd.ticktime / 3600;
-            int minutes = (cd.ticktime % 3600) / 60;
-            int seconds = cd.ticktime % 60;
+    long remaining = cd.endTimestamp - currentServerTime;
+    if (remaining < 0) remaining = 0;
 
-            char buf[16];
-            if (cd.ticktime == 0 && !hideWhenZero) strcpy(buf, "READY");
-            else sprintf(buf, "%02d:%02d:%02d", hours, minutes, seconds);
+    sprite.fillRect(cd.x, cd.y, 80, 20, TFT_BLACK);
 
-            sprite.setTextSize(1);
+    if (remaining > 0 || !hideWhenZero) {
 
-            // ALWAYS WHITE for the label
-            sprite.setTextColor(TFT_WHITE);
-            sprite.setCursor(cd.x, cd.y);
-            sprite.print(cd.label);
+        int hours = remaining / 3600;
+        int minutes = (remaining % 3600) / 60;
+        int seconds = remaining % 60;
 
-            // Green only for the timer/value if you want
-            sprite.setTextColor(cd.ticktime == 0 && !hideWhenZero ? TFT_GREEN : TFT_WHITE);
-            sprite.setCursor(cd.x, cd.y + 10);
-            sprite.print(buf);
-        }
+        char buf[16];
+
+        if (remaining == 0 && !hideWhenZero)
+            strcpy(buf, "READY");
+        else
+            sprintf(buf, "%02d:%02d:%02d", hours, minutes, seconds);
+
+        sprite.setTextSize(1);
+
+        sprite.setTextColor(TFT_WHITE);
+        sprite.setCursor(cd.x, cd.y);
+        sprite.print(cd.label);
+
+        sprite.setTextColor(remaining == 0 ? TFT_GREEN : TFT_WHITE);
+        sprite.setCursor(cd.x, cd.y + 10);
+        sprite.print(buf);
     }
 }
 
 void updateCooldownFromAPI(Cooldown &cd, int newValue, long serverTime = 0, bool isAbsolute = false) {
-  cd.ticktime = isAbsolute ? max(0L, newValue - serverTime) : max(0, newValue);
+
+  if (isAbsolute) {
+      cd.endTimestamp = newValue;
+  } else {
+      cd.endTimestamp = serverTime + newValue;
+  }
+
   cd.apiValue = newValue;
 }
 
@@ -287,7 +299,6 @@ void loop() {
 
   if (WiFi.status() != WL_CONNECTED) { WiFi.reconnect(); delay(1000); return; }
 
-  static unsigned long lastApiUpdate = 0;
   unsigned long now = millis();
 
     // -------- API fetch --------
@@ -295,10 +306,11 @@ void loop() {
         lastApiUpdate = now;
 
         // ------------------- PLAYER BASIC API -------------------
+        httpCode = 0;
         HTTPClient http;
         http.begin("https://api.torn.com/user/?selections=basic,bars,travel,cooldowns,notifications,money,profile&key=" + String(apiKey));
-        http.setTimeout(5000);
-        int httpCode = http.GET();
+        http.setTimeout(2000);
+        httpCode = http.GET();
 
         if (httpCode > 0) {
             String payload = http.getString();
@@ -341,6 +353,10 @@ void loop() {
                     moneyOnHand = doc["money_onhand"] | 0;
                 }
 
+                if (doc.containsKey("faction")){
+                    factionId = doc["faction"]["faction_id"] | 0;
+                }
+
                 // -------- Notifications --------
                 if (doc.containsKey("notifications")) {
                     JsonObject notif = doc["notifications"].as<JsonObject>();
@@ -351,7 +367,7 @@ void loop() {
                     notificationsCount += notif["competition"] | 0;
                 }
 
-                lastApiUpdateMillis = millis();     // ESP millis when we got the server time
+                lastApiUpdateMillis = millis();
             }
             else{
                 apiError = true;
@@ -363,6 +379,7 @@ void loop() {
         client.setInsecure();  // skip cert validation
 
         // ------------------- CHAIN -------------------
+        httpCode = 0;
         HTTPClient httpChain;
         String url = "https://api.torn.com/v2/faction/chain";
         httpChain.begin(client, url);
@@ -370,12 +387,12 @@ void loop() {
         httpChain.addHeader("accept", "application/json");
 
         httpChain.setTimeout(5000);
-        int code = httpChain.GET();
+        httpCode = httpChain.GET();
         chainCurrent = 0;
         chainMax = 0;
         chainTimeout = 0;
 
-        if (code > 0) {
+        if (httpCode > 0) {
             String payload = httpChain.getString();
             DynamicJsonDocument doc(2048);
             doc.clear();
@@ -394,7 +411,6 @@ void loop() {
                     } else {
                         chainCooldownTick = 0;
                     }
-                    lastChainCooldownUpdate = millis();
 
                     chainTimeoutTick = chainTimeout;
                     lastChainUpdate = millis();
@@ -404,38 +420,40 @@ void loop() {
         httpChain.end();
 
         // ------------------- ORGANIZED CRIME -------------------
+        httpCode = 0;
         HTTPClient httpOC;
         httpOC.begin(client, "https://api.torn.com/v2/user/organizedcrime");
         httpOC.addHeader("Authorization", "ApiKey " + String(apiKey));
         httpOC.addHeader("accept", "application/json");
 
         httpOC.setTimeout(5000);
-        int ocCode = httpOC.GET();
-        if (ocCode > 0) {
+        httpCode = httpOC.GET();
+        if (httpCode > 0) {
             String payload = httpOC.getString();
             DynamicJsonDocument doc(2048);
             doc.clear();
 
             if (!deserializeJson(doc, payload)) {
-                ocReadyAt = doc["organizedCrime"]["ready_at"] | 0; // Unix timestamp
+                ocReadyAt = doc["organizedCrime"]["ready_at"] | 0;
 
                 // Compute remaining seconds
                 ocServerBaseTime = serverTime;
-                ocMillisBase = millis();
+                lastOCUpdate = millis();
             }
         }
         httpOC.end();
 
         // ------------------- Ranked War -------------------
+        httpCode = 0;
         HTTPClient httpRW;
         httpRW.begin(client, "https://api.torn.com/v2/faction/rankedwars?offset=0&limit=1&sort=DESC");
         httpRW.addHeader("Authorization", "ApiKey " + String(apiKey));
         httpRW.addHeader("accept", "application/json");
 
         httpRW.setTimeout(5000);
-        code = httpRW.GET();
+        httpCode = httpRW.GET();
 
-        if (code > 0) {
+        if (httpCode > 0) {
             String payload = httpRW.getString();
 
             DynamicJsonDocument doc(4096);
@@ -452,23 +470,45 @@ void loop() {
                     } else {
                         rwActive = false;
                     }
+                    
+                    if (war.containsKey("factions")) {
 
-                    if (war.containsKey("opponent")) {
-                        opponentName = String((const char*)war["opponent"]["name"]);
+                        JsonArray factions = war["factions"];
+
+                        if (factions.size() >= 2) {
+
+                            JsonObject faction1 = factions[0];
+                            JsonObject faction2 = factions[1];
+
+                            int id1 = faction1["id"] | 0;
+                            int id2 = faction2["id"] | 0;
+
+                            int score1 = faction1["score"] | 0;
+                            int score2 = faction2["score"] | 0;
+
+                            // Determine player faction
+                            if (id1 == factionId) {
+                                rwScoreUs = score1;
+                                rwScoreEnemy = score2;
+                            } else {
+                                rwScoreUs = score2;
+                                rwScoreEnemy = score1;
+                            }
+                        }
                     }
 
                     rwServerBaseTime = serverTime;
-                    rwMillisBase = millis();
+                    lastRWUpdate = millis();
                 }
             }
         }
         httpRW.end();
 
         // -------- Update cooldowns from API --------
-        updateCooldownFromAPI(boosterCD, boosterCooldown);
-        updateCooldownFromAPI(drugCD, drugCooldown);
-        updateCooldownFromAPI(medicalCD, medicalCooldown);
-        updateCooldownFromAPI(travelCD, travelTime);
+        updateCooldownFromAPI(boosterCD, boosterCooldown, serverTime);
+        updateCooldownFromAPI(drugCD, drugCooldown, serverTime);
+        updateCooldownFromAPI(medicalCD, medicalCooldown, serverTime);
+        updateCooldownFromAPI(travelCD, travelTime, serverTime);
         updateCooldownFromAPI(hospitalCD, hospitalTs, serverTime, true);
         updateCooldownFromAPI(jailCD, jailTs, serverTime, true);
 
@@ -606,8 +646,7 @@ void loop() {
     if (ocReadyAt > 0 && millis() - lastOCDraw >= 1000) {
         lastOCDraw = millis();
 
-        long currentServerTime = ocServerBaseTime +
-            (millis() - ocMillisBase) / 1000;
+        long currentServerTime = ocServerBaseTime + (millis() - lastOCUpdate) / 1000.0;
 
         long remaining = ocReadyAt - currentServerTime;
         if (remaining < 0) remaining = 0;
@@ -638,8 +677,7 @@ void loop() {
     if (rwStartAt > 0 && millis() - lastRWDraw >= 1000) {
         lastRWDraw = millis();
 
-        long currentServerTime = serverTime +
-            (millis() - lastApiUpdateMillis) / 1000;
+        long currentServerTime = serverTime + (millis() - lastApiUpdateMillis) / 1000.0;
 
         long displayTime = 0;
         bool warRunningNow = false;
@@ -665,8 +703,26 @@ void loop() {
         char rwBuf[20];
         sprintf(rwBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
 
+        // ----- DRAW SCORE -----
+        if (warRunningNow) {
+            char scoreBuf[16];
+            sprintf(scoreBuf, "%d:%d", rwScoreUs, rwScoreEnemy);
+
+            int scoreWidth = sprite.textWidth(scoreBuf);
+            int scoreX = screenWidth - scoreWidth - 10;
+
+            uint16_t scoreColor = TFT_YELLOW;
+
+            if (rwScoreUs > rwScoreEnemy) scoreColor = TFT_GREEN;
+            if (rwScoreUs < rwScoreEnemy) scoreColor = TFT_RED;
+
+            sprite.setTextColor(scoreColor);
+            sprite.setCursor(scoreX, 79);
+            sprite.print(scoreBuf);
+        }
+
         // Clear area
-        sprite.fillRect(15, 79, 200, 12, TFT_BLACK);
+        sprite.fillRect(15, 79, 120, 12, TFT_BLACK);
 
         sprite.setTextSize(1);
 
@@ -694,7 +750,7 @@ void loop() {
     if (serverTime > 0 && millis() - lastClockDraw >= 1000) {
         lastClockDraw = millis();
 
-        long currentServerTime = serverTime + (millis() - lastApiUpdateMillis)/1000;
+        long currentServerTime = serverTime + (millis() - lastApiUpdateMillis)/1000.0;
 
         time_t rawTime = currentServerTime;
         struct tm * timeinfo = gmtime(&rawTime);
@@ -713,7 +769,7 @@ void loop() {
     }
 
     // -------- API countdown top-right --------
-    int apiCountdown = APIRefreshSecond - ((millis() - lastApiUpdate)/1000);
+    int apiCountdown = APIRefreshSecond - ((millis() - lastApiUpdate)/1000.0);
     if (apiCountdown < 0) apiCountdown = 0;
     char buf[8];
     sprintf(buf, "%3ds", apiCountdown);
