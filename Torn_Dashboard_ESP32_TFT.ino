@@ -643,7 +643,7 @@ void loop() {
     }
 
     // -------- Update Organized Crime countdown every second --------
-    if (ocReadyAt > 0 && millis() - lastOCDraw >= 1000) {
+    if (millis() - lastOCDraw >= 1000) {
         lastOCDraw = millis();
 
         long currentServerTime = ocServerBaseTime + (millis() - lastOCUpdate) / 1000.0;
@@ -660,7 +660,7 @@ void loop() {
         sprintf(timeBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
 
         // Clear area under money
-        sprite.fillRect(15, 67, 180, 12, TFT_BLACK);
+        sprite.fillRect(15, 67, 120, 12, TFT_BLACK);
         sprite.setTextSize(1);
 
         // ----- LABEL ALWAYS WHITE -----
@@ -736,8 +736,10 @@ void loop() {
 
         if (warRunningNow) {
             rwColor = TFT_RED;                      // War running
-        } else if (displayTime <= 3600) {
+        } else if (displayTime <= 3600 && displayTime != 0) {
             rwColor = TFT_YELLOW;                   // < 1 hour before start
+        } else if (displayTime == 0) {
+            rwColor = TFT_GREEN;                    // = 0 hour before start
         } else {
             rwColor = TFT_WHITE;                    // > 1 hour before start
         }
