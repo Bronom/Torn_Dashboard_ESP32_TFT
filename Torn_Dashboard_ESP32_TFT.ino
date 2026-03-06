@@ -49,11 +49,10 @@ unsigned long lastChainUpdate = 0;
 
 int chainCooldown = 0;          // cooldown from API
 int chainCooldownTick = 0;      // local ticking value
-unsigned long lastChainCooldownUpdate = 0;
 
 // ------------------- Organized Crime -------------------
 long ocReadyAt = 0;
-unsigned long ocMillisBase = 0;
+unsigned long lastOCUpdate = 0;
 long ocServerBaseTime = 0;
 unsigned long lastOCDraw = 0;
 
@@ -62,7 +61,7 @@ long rwStartAt = 0;
 long rwEndAt = 0;
 String opponentName = "";
 String rwResult = "";
-unsigned long rwMillisBase = 0;
+unsigned long lastRWUpdate = 0;
 long rwServerBaseTime = 0;
 unsigned long lastRWDraw = 0;
 bool rwActive = false;   // true if war is running (winner is null)
@@ -108,6 +107,7 @@ int barHeight = 10;
 long moneyOnHand = 0;
 int notificationsCount = 0;
 int factionId = 0;
+int httpCode = 0;
 
 // ------------------- Utility Functions -------------------
 uint16_t statusColor(String color) {
@@ -185,7 +185,7 @@ void drawBar(int x, int y, int width, int height, float percent, uint16_t fillCo
 void updateCooldown(Cooldown &cd, bool hideWhenZero = false) {
 
     long currentServerTime = serverTime +
-        (millis() - lastApiUpdateMillis) / 1000;
+        (millis() - lastApiUpdateMillis) / 1000.0;
 
     long remaining = cd.endTimestamp - currentServerTime;
     if (remaining < 0) remaining = 0;
@@ -306,10 +306,11 @@ void loop() {
         lastApiUpdate = now;
 
         // ------------------- PLAYER BASIC API -------------------
+        httpCode = 0;
         HTTPClient http;
         http.begin("https://api.torn.com/user/?selections=basic,bars,travel,cooldowns,notifications,money,profile&key=" + String(apiKey));
-        http.setTimeout(5000);
-        int httpCode = http.GET();
+        http.setTimeout(2000);
+        httpCode = http.GET();
 
         if (httpCode > 0) {
             String payload = http.getString();
@@ -378,6 +379,7 @@ void loop() {
         client.setInsecure();  // skip cert validation
 
         // ------------------- CHAIN -------------------
+        httpCode = 0;
         HTTPClient httpChain;
         String url = "https://api.torn.com/v2/faction/chain";
         httpChain.begin(client, url);
@@ -385,12 +387,12 @@ void loop() {
         httpChain.addHeader("accept", "application/json");
 
         httpChain.setTimeout(5000);
-        int code = httpChain.GET();
+        httpCode = httpChain.GET();
         chainCurrent = 0;
         chainMax = 0;
         chainTimeout = 0;
 
-        if (code > 0) {
+        if (httpCode > 0) {
             String payload = httpChain.getString();
             DynamicJsonDocument doc(2048);
             doc.clear();
@@ -409,7 +411,6 @@ void loop() {
                     } else {
                         chainCooldownTick = 0;
                     }
-                    lastChainCooldownUpdate = millis();
 
                     chainTimeoutTick = chainTimeout;
                     lastChainUpdate = millis();
@@ -419,14 +420,15 @@ void loop() {
         httpChain.end();
 
         // ------------------- ORGANIZED CRIME -------------------
+        httpCode = 0;
         HTTPClient httpOC;
         httpOC.begin(client, "https://api.torn.com/v2/user/organizedcrime");
         httpOC.addHeader("Authorization", "ApiKey " + String(apiKey));
         httpOC.addHeader("accept", "application/json");
 
         httpOC.setTimeout(5000);
-        int ocCode = httpOC.GET();
-        if (ocCode > 0) {
+        httpCode = httpOC.GET();
+        if (httpCode > 0) {
             String payload = httpOC.getString();
             DynamicJsonDocument doc(2048);
             doc.clear();
@@ -436,21 +438,22 @@ void loop() {
 
                 // Compute remaining seconds
                 ocServerBaseTime = serverTime;
-                ocMillisBase = millis();
+                lastOCUpdate = millis();
             }
         }
         httpOC.end();
 
         // ------------------- Ranked War -------------------
+        httpCode = 0;
         HTTPClient httpRW;
         httpRW.begin(client, "https://api.torn.com/v2/faction/rankedwars?offset=0&limit=1&sort=DESC");
         httpRW.addHeader("Authorization", "ApiKey " + String(apiKey));
         httpRW.addHeader("accept", "application/json");
 
         httpRW.setTimeout(5000);
-        code = httpRW.GET();
+        httpCode = httpRW.GET();
 
-        if (code > 0) {
+        if (httpCode > 0) {
             String payload = httpRW.getString();
 
             DynamicJsonDocument doc(4096);
@@ -495,7 +498,7 @@ void loop() {
                     }
 
                     rwServerBaseTime = serverTime;
-                    rwMillisBase = millis();
+                    lastRWUpdate = millis();
                 }
             }
         }
@@ -643,8 +646,7 @@ void loop() {
     if (ocReadyAt > 0 && millis() - lastOCDraw >= 1000) {
         lastOCDraw = millis();
 
-        long currentServerTime = ocServerBaseTime +
-            (millis() - ocMillisBase) / 1000;
+        long currentServerTime = ocServerBaseTime + (millis() - lastOCUpdate) / 1000.0;
 
         long remaining = ocReadyAt - currentServerTime;
         if (remaining < 0) remaining = 0;
@@ -675,8 +677,7 @@ void loop() {
     if (rwStartAt > 0 && millis() - lastRWDraw >= 1000) {
         lastRWDraw = millis();
 
-        long currentServerTime = serverTime +
-            (millis() - lastApiUpdateMillis) / 1000;
+        long currentServerTime = serverTime + (millis() - lastApiUpdateMillis) / 1000.0;
 
         long displayTime = 0;
         bool warRunningNow = false;
@@ -702,8 +703,8 @@ void loop() {
         char rwBuf[20];
         sprintf(rwBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
 
+        // ----- DRAW SCORE -----
         if (warRunningNow) {
-            // ----- DRAW SCORE -----
             char scoreBuf[16];
             sprintf(scoreBuf, "%d:%d", rwScoreUs, rwScoreEnemy);
 
@@ -749,7 +750,7 @@ void loop() {
     if (serverTime > 0 && millis() - lastClockDraw >= 1000) {
         lastClockDraw = millis();
 
-        long currentServerTime = serverTime + (millis() - lastApiUpdateMillis)/1000;
+        long currentServerTime = serverTime + (millis() - lastApiUpdateMillis)/1000.0;
 
         time_t rawTime = currentServerTime;
         struct tm * timeinfo = gmtime(&rawTime);
@@ -768,7 +769,7 @@ void loop() {
     }
 
     // -------- API countdown top-right --------
-    int apiCountdown = APIRefreshSecond - ((millis() - lastApiUpdate)/1000);
+    int apiCountdown = APIRefreshSecond - ((millis() - lastApiUpdate)/1000.0);
     if (apiCountdown < 0) apiCountdown = 0;
     char buf[8];
     sprintf(buf, "%3ds", apiCountdown);
