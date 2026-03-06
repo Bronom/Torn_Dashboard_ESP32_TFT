@@ -66,6 +66,9 @@ unsigned long rwMillisBase = 0;
 long rwServerBaseTime = 0;
 unsigned long lastRWDraw = 0;
 bool rwActive = false;   // true if war is running (winner is null)
+int rwScoreUs = 0;
+int rwScoreEnemy = 0;
+String rwFactionName = "";
 
 // ------------------- Torn Clock -------------------
 long serverTime = 0;
@@ -105,6 +108,7 @@ int barHeight = 10;
 
 long moneyOnHand = 0;
 int notificationsCount = 0;
+int factionId = 0;
 
 // ------------------- Utility Functions -------------------
 uint16_t statusColor(String color) {
@@ -341,6 +345,10 @@ void loop() {
                     moneyOnHand = doc["money_onhand"] | 0;
                 }
 
+                if (doc.containsKey("faction")){
+                    factionId = doc["faction"]["faction_id"] | 0;
+                }
+
                 // -------- Notifications --------
                 if (doc.containsKey("notifications")) {
                     JsonObject notif = doc["notifications"].as<JsonObject>();
@@ -455,6 +463,32 @@ void loop() {
 
                     if (war.containsKey("opponent")) {
                         opponentName = String((const char*)war["opponent"]["name"]);
+                    }
+                    
+                    if (war.containsKey("factions")) {
+
+                        JsonArray factions = war["factions"];
+
+                        if (factions.size() >= 2) {
+
+                            JsonObject faction1 = factions[0];
+                            JsonObject faction2 = factions[1];
+
+                            int id1 = faction1["id"] | 0;
+                            int id2 = faction2["id"] | 0;
+
+                            int score1 = faction1["score"] | 0;
+                            int score2 = faction2["score"] | 0;
+
+                            // Determine which faction is yours
+                            if (id1 == factionId) {
+                                rwScoreUs = score1;
+                                rwScoreEnemy = score2;
+                            } else {
+                                rwScoreUs = score2;
+                                rwScoreEnemy = score1;
+                            }
+                        }
                     }
 
                     rwServerBaseTime = serverTime;
@@ -665,8 +699,26 @@ void loop() {
         char rwBuf[20];
         sprintf(rwBuf, "%02ld:%02ld:%02ld:%02ld", days, hours, minutes, seconds);
 
+        if (warRunningNow) {
+            // ----- DRAW SCORE -----
+            char scoreBuf[16];
+            sprintf(scoreBuf, "%d:%d", rwScoreUs, rwScoreEnemy);
+
+            int scoreWidth = sprite.textWidth(scoreBuf);
+            int scoreX = screenWidth - scoreWidth - 10;
+
+            uint16_t scoreColor = TFT_YELLOW;
+
+            if (rwScoreUs > rwScoreEnemy) scoreColor = TFT_GREEN;
+            if (rwScoreUs < rwScoreEnemy) scoreColor = TFT_RED;
+
+            sprite.setTextColor(scoreColor);
+            sprite.setCursor(scoreX, 79);
+            sprite.print(scoreBuf);
+        }
+
         // Clear area
-        sprite.fillRect(15, 79, 200, 12, TFT_BLACK);
+        sprite.fillRect(15, 79, 120, 12, TFT_BLACK);
 
         sprite.setTextSize(1);
 
