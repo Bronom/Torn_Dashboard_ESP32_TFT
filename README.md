@@ -5,7 +5,9 @@
 
 # Part List : 
 2.8 Inch SPI TFT LCD Touch ILI9341
+
 ESP32-32D
+
 Electrical Wire
 
 # Pinout : 
@@ -29,10 +31,14 @@ Electrical Wire
 
 
 # Library : 
-TFT_eSPO by Bodmer
+TFT_eSPI by Bodmer
+
 XPT2046_Touchscreen by Paul Stoffregen
+
 Wifi by Arduino
+
 HttpClient by Adrian McEwen
+
 ArduinoJson by Benoit Blanchon
 
 # Board Manager :
