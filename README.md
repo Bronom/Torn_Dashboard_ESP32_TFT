@@ -8,6 +8,8 @@
 
 ESP32-32D
 
+ESP32-32D Breaker Board (Recommended)
+
 Electrical Wire
 
 # Pinout : 
