@@ -32,6 +32,9 @@ Electrical Wire
 | **IRQ / PEN** | 22        | Some libraries support touch IRQ pin |
 
 
+# Setup : 
+To Setup go to this link : https://torndb.bronom.com/
+
 # Library : 
 TFT_eSPI by Bodmer
 
