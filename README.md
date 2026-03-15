@@ -33,7 +33,7 @@ Electrical Wire
 
 
 # Setup : 
-To Setup go to this link : https://torndb.bronom.com/
+To Setup go to this link : 
 
 # Library : 
 TFT_eSPI by Bodmer
