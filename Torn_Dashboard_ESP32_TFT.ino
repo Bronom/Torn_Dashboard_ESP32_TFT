@@ -8,6 +8,11 @@
 
 Preferences prefs;
 
+// Active config
+String wifiSSID = "";
+String wifiPASS = "";
+String apiKey   = "";
+
 // ------------------- TFT Setup -------------------
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite sprite = TFT_eSprite(&tft);
@@ -112,6 +117,23 @@ int httpCode = 0;
 
 // ------------------- Config -------------------
 bool loadConfig() {
+#if MANUAL_FLASH
+  if (wifiCount > 0) {
+    wifiSSID = wifiList[0].ssid;
+    wifiPASS = wifiList[0].password;
+  } else {
+    wifiSSID = "";
+    wifiPASS = "";
+  }
+
+  apiKey = String(MANUAL_API_KEY);
+
+  Serial0.println("Loaded MANUAL config:");
+  Serial0.println("SSID: " + wifiSSID);
+  Serial0.println("API: " + apiKey);
+
+  return (wifiSSID.length() > 0 && apiKey.length() > 0);
+#else
   prefs.begin("config", true);
 
   wifiSSID = prefs.getString("ssid", "");
@@ -120,22 +142,31 @@ bool loadConfig() {
 
   prefs.end();
 
-  Serial0.println("Loaded config:");
+  Serial0.println("Loaded WEB config:");
   Serial0.println("SSID: " + wifiSSID);
   Serial0.println("API: " + apiKey);
 
   return (wifiSSID.length() > 0 && apiKey.length() > 0);
+#endif
 }
 
 void saveConfig(const String& ssid, const String& pass, const String& api) {
+#if MANUAL_FLASH
+  Serial0.println("Manual mode active - config save skipped");
+#else
   prefs.begin("config", false);
   prefs.putString("ssid", ssid);
   prefs.putString("pass", pass);
   prefs.putString("api", api);
   prefs.end();
+#endif
 }
 
 void waitForConfig() {
+#if MANUAL_FLASH
+  Serial0.println("Manual mode active - skipping waitForConfig");
+  return;
+#else
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_YELLOW);
   tft.setTextSize(2);
@@ -199,6 +230,7 @@ void waitForConfig() {
 
     delay(10);
   }
+#endif
 }
 
 // ------------------- Utility Functions -------------------
@@ -252,6 +284,8 @@ void drawStatus(String text, int y, uint16_t textColor, int textSize = 2, int pa
 
 void drawBar(int x, int y, int width, int height, float percent, uint16_t fillColor, uint16_t bgColor, int currentValue, int maxValue, const char* label) {
   if (percent > 1) percent = 1;
+  if (percent < 0) percent = 0;
+
   sprite.fillRect(x, y, width, height, bgColor);
   sprite.fillRect(x, y, (int)(width * percent), height, fillColor);
   sprite.drawRect(x, y, width, height, TFT_WHITE);
@@ -317,6 +351,61 @@ void connectWiFi() {
   tft.setCursor(15, 10);
   tft.println("Connecting WiFi...");
 
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+
+#if MANUAL_FLASH
+  bool connected = false;
+
+  for (int i = 0; i < wifiCount; i++) {
+    Serial0.print("Trying WiFi: ");
+    Serial0.println(wifiList[i].ssid);
+
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE);
+    tft.setTextSize(2);
+    tft.setCursor(15, 10);
+    tft.println("Connecting WiFi...");
+    tft.setTextSize(1);
+    tft.setCursor(15, 40);
+    tft.print("Trying: ");
+    tft.println(wifiList[i].ssid);
+
+    WiFi.disconnect(true);
+    delay(300);
+    WiFi.begin(wifiList[i].ssid, wifiList[i].password);
+
+    unsigned long startTime = millis();
+    while (millis() - startTime < 10000) {
+      if (WiFi.status() == WL_CONNECTED) {
+        wifiSSID = wifiList[i].ssid;
+        wifiPASS = wifiList[i].password;
+        connected = true;
+        break;
+      }
+      delay(500);
+    }
+
+    if (connected) break;
+  }
+
+  if (connected) {
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_WHITE);
+    tft.setTextSize(2);
+    tft.setCursor(15, 10);
+    tft.println("WiFi Connected!");
+    tft.setTextSize(1);
+    tft.setCursor(15, 35);
+    tft.print("SSID: ");
+    tft.println(wifiSSID);
+    tft.setCursor(15, 60);
+    tft.print("IP: ");
+    tft.println(WiFi.localIP());
+    return;
+  }
+
+#else
   if (wifiSSID.length() == 0) {
     tft.setTextColor(TFT_RED);
     tft.setCursor(15, 40);
@@ -324,16 +413,17 @@ void connectWiFi() {
     return;
   }
 
-  WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);
   WiFi.begin(wifiSSID.c_str(), wifiPASS.c_str());
 
   unsigned long startTime = millis();
   while (millis() - startTime < 15000) {
     if (WiFi.status() == WL_CONNECTED) {
       tft.fillScreen(TFT_BLACK);
+      tft.setTextColor(TFT_WHITE);
+      tft.setTextSize(2);
       tft.setCursor(15, 10);
       tft.println("WiFi Connected!");
+      tft.setTextSize(1);
       tft.setCursor(15, 35);
       tft.print("SSID: ");
       tft.println(wifiSSID);
@@ -344,6 +434,7 @@ void connectWiFi() {
     }
     delay(500);
   }
+#endif
 
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(TFT_RED);
@@ -355,6 +446,12 @@ void connectWiFi() {
 void setup() {
   Serial0.begin(115200);
   delay(1500);
+
+#if MANUAL_FLASH
+  Serial0.println("MODE = MANUAL");
+#else
+  Serial0.println("MODE = WEB");
+#endif
 
   tft.init();
   tft.setRotation(0);
@@ -379,7 +476,18 @@ void setup() {
   sprite.fillScreen(TFT_BLACK);
 
   if (!loadConfig()) {
+#if MANUAL_FLASH
+    tft.fillScreen(TFT_BLACK);
+    tft.setTextColor(TFT_RED);
+    tft.setTextSize(2);
+    tft.setCursor(10, 10);
+    tft.println("Manual config");
+    tft.setCursor(10, 35);
+    tft.println("missing");
+    while (true) delay(100);
+#else
     waitForConfig();
+#endif
   }
 
   connectWiFi();
@@ -389,6 +497,14 @@ WiFiClientSecure client;
 
 // ------------------- Main Loop -------------------
 void loop() {
+  // Disable touch for debug if needed:
+  // uint16_t touchX, touchY;
+  // if (tft.getTouch(&touchX, &touchY) && millis() - lastTouchTime > 300) {
+  //   screenOn = !screenOn;
+  //   digitalWrite(TFT_BL, screenOn ? HIGH : LOW);
+  //   lastTouchTime = millis();
+  // }
+
   uint16_t touchX, touchY;
   if (tft.getTouch(&touchX, &touchY) && millis() - lastTouchTime > 300) {
     screenOn = !screenOn;
@@ -409,7 +525,7 @@ void loop() {
 
     httpCode = 0;
     HTTPClient http;
-    http.begin("https://api.torn.com/user/?selections=basic,bars,travel,cooldowns,notifications,money,profile&key=" + String(apiKey));
+    http.begin("https://api.torn.com/user/?selections=basic,bars,travel,cooldowns,notifications,money,profile&key=" + apiKey);
     http.setTimeout(2000);
     httpCode = http.GET();
 
@@ -447,8 +563,13 @@ void loop() {
         travelTime = doc["travel"]["time_left"] | 0;
 
         serverTime = doc["server_time"] | 0;
-        hospitalTs = doc["states"]["hospital_timestamp"] | 0;
-        jailTs     = doc["states"]["jail_timestamp"] | 0;
+
+        hospitalTs = 0;
+        jailTs = 0;
+        if (doc.containsKey("states")) {
+          hospitalTs = doc["states"]["hospital_timestamp"] | 0;
+          jailTs     = doc["states"]["jail_timestamp"] | 0;
+        }
 
         if (doc.containsKey("money_onhand")) {
           moneyOnHand = doc["money_onhand"] | 0;
@@ -472,6 +593,9 @@ void loop() {
         apiError = true;
         lastApiError = doc["error"]["error"].as<String>();
       }
+    } else {
+      apiError = true;
+      lastApiError = "User API HTTP failed: " + String(httpCode);
     }
     http.end();
 
@@ -481,7 +605,7 @@ void loop() {
     HTTPClient httpChain;
     String url = "https://api.torn.com/v2/faction/chain";
     httpChain.begin(client, url);
-    httpChain.addHeader("Authorization", "ApiKey " + String(apiKey));
+    httpChain.addHeader("Authorization", "ApiKey " + apiKey);
     httpChain.addHeader("accept", "application/json");
     httpChain.setTimeout(5000);
     httpCode = httpChain.GET();
@@ -517,7 +641,7 @@ void loop() {
     httpCode = 0;
     HTTPClient httpOC;
     httpOC.begin(client, "https://api.torn.com/v2/user/organizedcrime");
-    httpOC.addHeader("Authorization", "ApiKey " + String(apiKey));
+    httpOC.addHeader("Authorization", "ApiKey " + apiKey);
     httpOC.addHeader("accept", "application/json");
     httpOC.setTimeout(5000);
     httpCode = httpOC.GET();
@@ -538,7 +662,7 @@ void loop() {
     httpCode = 0;
     HTTPClient httpRW;
     httpRW.begin(client, "https://api.torn.com/v2/faction/rankedwars?offset=0&limit=1&sort=DESC");
-    httpRW.addHeader("Authorization", "ApiKey " + String(apiKey));
+    httpRW.addHeader("Authorization", "ApiKey " + apiKey);
     httpRW.addHeader("accept", "application/json");
     httpRW.setTimeout(5000);
     httpCode = httpRW.GET();
@@ -553,9 +677,7 @@ void loop() {
           JsonObject war = doc["rankedwars"][0];
           rwStartAt = war["start"] | 0;
           rwEndAt = war["end"] | 0;
-
-          if (war["winner"].isNull()) rwActive = true;
-          else rwActive = false;
+          rwActive = war["winner"].isNull();
 
           if (war.containsKey("factions")) {
             JsonArray factions = war["factions"];
@@ -593,9 +715,19 @@ void loop() {
     updateCooldownFromAPI(hospitalCD, hospitalTs, serverTime, true);
     updateCooldownFromAPI(jailCD, jailTs, serverTime, true);
 
-    if (!apiError) {
-      sprite.fillScreen(TFT_BLACK);
+    sprite.fillScreen(TFT_BLACK);
 
+    if (apiError) {
+      sprite.setTextColor(TFT_RED, TFT_BLACK);
+      sprite.setTextSize(2);
+      sprite.setCursor(10, 10);
+      sprite.println("API Error");
+
+      sprite.setTextSize(1);
+      sprite.setTextColor(TFT_WHITE, TFT_BLACK);
+      sprite.setCursor(10, 40);
+      sprite.println(lastApiError);
+    } else {
       sprite.setTextSize(2);
       sprite.setTextColor(TFT_WHITE);
       sprite.setCursor(15, 10);
